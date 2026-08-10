@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.hjc.ark-agent.check</string>
+
+  <!-- 隨選的前置檢查，沒有排程時段。用途是在**真正的 launchd 環境**下驗證
+       輔助使用權限與券商連線——AX 權限按執行檔授權，Terminal 有不代表
+       launchd job 有。改動排程或系統升級後跑一次：
+
+         launchctl kickstart -k gui/$(id -u)/com.hjc.ark-agent.check
+  -->
+  <key>ProgramArguments</key>
+  <array>
+    <!-- 進入點必須是 uv 而非 /bin/bash：macOS 封鎖系統二進位檔在 launchd 下
+         存取 ~/Documents 等受保護目錄（防止用腳本繞過 TCC），實測 /bin/bash
+         連讀取 daily.py 都會 Operation not permitted。 -->
+    <string>/opt/homebrew/bin/uv</string>
+    <string>run</string>
+    <string>/Users/hjc/Documents/Stock/plugin/plugins/ark-toolkit/skills/ark-agent/daily.py</string>
+    <string>check</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/hjc/Documents/Stock</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/hjc/.local/bin</string>
+    <key>HOME</key>
+    <string>/Users/hjc</string>
+    <key>ARK_BACKEND</key>
+    <string>simulation</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/hjc/.ark-toolkit/agent/launchd.check.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/hjc/.ark-toolkit/agent/launchd.check.err</string>
+</dict>
+</plist>

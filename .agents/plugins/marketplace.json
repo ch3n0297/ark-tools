@@ -1,0 +1,19 @@
+{
+  "name": "ark-tools",
+  "interface": {
+    "displayName": "ARK Tools"
+  },
+  "plugins": [
+    {
+      "name": "ark-toolkit",
+      "source": {
+        "source": "local",
+        "path": "./plugins/ark-toolkit"
+      },
+      "policy": {
+        "installation": "AVAILABLE"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.hjc.ark-agent.decide</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <!-- 進入點必須是 uv 而非 /bin/bash：macOS 封鎖系統二進位檔在 launchd 下
+         存取 ~/Documents 等受保護目錄（防止用腳本繞過 TCC），實測 /bin/bash
+         連讀取 daily.py 都會 Operation not permitted。 -->
+    <string>/opt/homebrew/bin/uv</string>
+    <string>run</string>
+    <string>/Users/hjc/Documents/Stock/plugin/plugins/ark-toolkit/skills/ark-agent/daily.py</string>
+    <string>decide</string>
+  </array>
+
+  <!-- 平日 10:00：此時 ARK 已用當日盤中資料重算過至少一次（官方：指標約每小時
+       重算、台股盤中算出調台股），同時避開 09:00–09:30 的開盤波動。 -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+
+  <!-- 機器睡著而錯過時段時，不要醒來後補跑：10:00 的決策在 13:00 執行是另一回事，
+       盤中價格早已不同。寧可缺一天（settle 會記 missed），也不要用過期的判斷下單。 -->
+  <key>StartCalendarIntervalRunAtLoad</key>
+  <false/>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/hjc/Documents/Stock</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/hjc/.local/bin</string>
+    <key>HOME</key>
+    <string>/Users/hjc</string>
+    <!-- 切實單改成 live。預設 simulation：不會因為忘記設定就動到真錢。 -->
+    <key>ARK_BACKEND</key>
+    <string>simulation</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/hjc/.ark-toolkit/agent/launchd.decide.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/hjc/.ark-toolkit/agent/launchd.decide.err</string>
+</dict>
+</plist>

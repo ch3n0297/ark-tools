@@ -1,0 +1,305 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 920" width="1440" height="920"
+     font-family="'PingFang TC','Noto Sans TC','Helvetica Neue',sans-serif">
+  <title>ARK 方舟運算 App v1.7.4 UX 功能地圖</title>
+  <desc>由 ark-explore 對 v1.7.4 實際 AX 探索產出（2026-08-06，32 頁）。
+        上半為核心資料流，下半為六個底部 tab 的完整功能地圖。</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#F4A340"/>
+    </marker>
+    <marker id="arrowMuted" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5C7086"/>
+    </marker>
+    <linearGradient id="flowBand" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#16212F"/>
+      <stop offset="100%" stop-color="#131C28"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1440" height="920" fill="#0F1722"/>
+
+  <!-- ══════════════════ 標題 ══════════════════ -->
+  <text x="50" y="42" font-size="27" font-weight="600" fill="#E8EEF4" letter-spacing="1">
+    方舟運算 ARK <tspan fill="#5C7086" font-weight="400">— UX 功能地圖</tspan>
+  </text>
+  <text x="50" y="65" font-size="12.5" fill="#8FA3B8">
+    v1.7.4　由 ark-explore 實際 AX 探索產出（2026-08-06，32 頁）
+    <tspan fill="#5C7086">每個節點標示：功能 → 內容 → 作用</tspan>
+  </text>
+
+  <!-- 圖例 -->
+  <g font-size="11" fill="#8FA3B8">
+    <rect x="1010" y="30" width="11" height="11" rx="2.5" fill="#F4A340"/><text x="1028" y="40">決策計算</text>
+    <rect x="1105" y="30" width="11" height="11" rx="2.5" fill="#3FB8AF"/><text x="1123" y="40">部位資料</text>
+    <rect x="1200" y="30" width="11" height="11" rx="2.5" fill="#A78BFA"/><text x="1218" y="40">內容學習</text>
+    <rect x="1295" y="30" width="11" height="11" rx="2.5" fill="#F472B6"/><text x="1313" y="40">社群</text>
+    <rect x="1370" y="30" width="11" height="11" rx="2.5" fill="#94A3B8"/><text x="1388" y="40">帳務</text>
+  </g>
+
+  <!-- ══════════════════ 核心資料流 ══════════════════ -->
+  <rect x="36" y="88" width="1368" height="232" rx="12" fill="url(#flowBand)" stroke="#22303F"/>
+  <text x="54" y="112" font-size="14" font-weight="600" fill="#F4A340" letter-spacing="2">核心資料流</text>
+  <text x="152" y="112" font-size="11.5" fill="#8FA3B8">
+    所有建議都站在手動維護的庫存上 —— 庫存過期，整條鏈的輸出全部是錯的
+  </text>
+
+  <!-- 流程節點 -->
+  <g>
+    <!-- 1 Shioaji -->
+    <rect x="54" y="130" width="212" height="112" rx="9" fill="#141F2B" stroke="#2E4152" stroke-dasharray="4 3"/>
+    <text x="70" y="153" font-size="13" font-weight="600" fill="#8FA3B8">永豐 Shioaji</text>
+    <text x="70" y="174" font-size="10.5" fill="#6E8399">App 外部・真實持倉</text>
+    <text x="70" y="192" font-size="10.5" fill="#6E8399">代號・股數・成交均價</text>
+    <text x="70" y="218" font-size="10.5" fill="#3FB8AF">作用：唯一真實來源</text>
+
+    <!-- 2 調節庫存 -->
+    <rect x="329" y="130" width="212" height="112" rx="9" fill="#12262A" stroke="#3FB8AF"/>
+    <text x="345" y="153" font-size="13" font-weight="600" fill="#3FB8AF">自選 › 調節庫存</text>
+    <text x="345" y="174" font-size="10.5" fill="#A9C4CE">手動維護的庫存清單</text>
+    <text x="345" y="192" font-size="10.5" fill="#A9C4CE">股數・成本均價・位階</text>
+    <text x="345" y="218" font-size="10.5" fill="#3FB8AF">作用：整個 App 的輸入源</text>
+
+    <!-- 3 風控運算 -->
+    <rect x="604" y="130" width="212" height="112" rx="9" fill="#2A2113" stroke="#F4A340"/>
+    <text x="620" y="153" font-size="13" font-weight="600" fill="#F4A340">運算 › 風控運算</text>
+    <text x="620" y="174" font-size="10.5" fill="#D9C4A5">帶入庫存 + 手填 TWD/USD</text>
+    <text x="620" y="192" font-size="10.5" fill="#D9C4A5">五指標 → 資金總額</text>
+    <text x="620" y="218" font-size="10.5" fill="#F4A340">作用：決定整體曝險</text>
+
+    <!-- 4 建議比例 -->
+    <rect x="879" y="130" width="212" height="112" rx="9" fill="#2A2113" stroke="#F4A340"/>
+    <text x="895" y="153" font-size="13" font-weight="600" fill="#F4A340">持股配置建議 X%</text>
+    <text x="895" y="174" font-size="10.5" fill="#D9C4A5">建議持股金額</text>
+    <text x="895" y="192" font-size="10.5" fill="#D9C4A5">建議閒錢・參考調節金額</text>
+    <text x="895" y="218" font-size="10.5" fill="#F4A340">作用：總量的答案</text>
+
+    <!-- 5 每檔建議 -->
+    <rect x="1154" y="130" width="212" height="112" rx="9" fill="#12262A" stroke="#3FB8AF"/>
+    <text x="1170" y="153" font-size="13" font-weight="600" fill="#3FB8AF">每檔的建議</text>
+    <text x="1170" y="174" font-size="10.5" fill="#A9C4CE">調節庫存：建議調節股數</text>
+    <text x="1170" y="192" font-size="10.5" fill="#A9C4CE">布局自選：位階／風控股數</text>
+    <text x="1170" y="218" font-size="10.5" fill="#3FB8AF">作用：個股的答案</text>
+  </g>
+
+  <!-- 流程箭頭 -->
+  <g stroke="#F4A340" stroke-width="1.6" fill="none" marker-end="url(#arrow)">
+    <path d="M266,186 L325,186"/>
+    <path d="M541,186 L600,186"/>
+    <path d="M816,186 L875,186"/>
+    <path d="M1091,186 L1150,186"/>
+  </g>
+  <g font-size="9.5" fill="#F4A340" text-anchor="middle">
+    <text x="295" y="178">ark-sync</text>
+    <text x="570" y="178">帶入庫存</text>
+    <text x="845" y="178">五指標</text>
+    <text x="1120" y="178">分配</text>
+  </g>
+
+  <text x="54" y="266" font-size="11" fill="#8FA3B8">
+    ARK 沒有券商連線。庫存必須手動維護，這就是 ark-sync 存在的唯一理由，
+    也是 ark-analyze 預設先與 Shioaji 對帳的理由。
+  </text>
+  <text x="54" y="286" font-size="11" fill="#8FA3B8">
+    擇時（該有幾成持股）與選股（哪些標的在價值區）是兩條獨立的線，
+    在「調節庫存」這一頁才交會成每檔的具體股數。
+  </text>
+  <text x="54" y="306" font-size="11" fill="#5C7086">
+    五指標＝全球散戶・外資情緒・位階增溫・社交反指・量能爆衝（算法不可見，只看得到結果）
+  </text>
+
+  <!-- ══════════════════ 完整功能地圖 ══════════════════ -->
+  <text x="54" y="358" font-size="14" font-weight="600" fill="#E8EEF4" letter-spacing="2">完整功能地圖</text>
+  <text x="176" y="358" font-size="11.5" fill="#8FA3B8">底部 tab 六個，由左至右固定</text>
+
+  <!-- ─── 策略 ─── -->
+  <g>
+    <rect x="50" y="376" width="210" height="42" rx="8" fill="#2A2113" stroke="#F4A340"/>
+    <text x="64" y="396" font-size="14" font-weight="600" fill="#F4A340">策略</text>
+    <text x="64" y="411" font-size="10" fill="#D9C4A5">選股篩選器</text>
+
+    <rect x="50" y="430" width="210" height="86" rx="7" fill="#18202A" stroke="#26323F"/>
+    <text x="64" y="449" font-size="11.5" font-weight="600" fill="#E8EEF4">價值區 ／ 升溫區</text>
+    <text x="64" y="466" font-size="10" fill="#8FA3B8">ETF・美股・產業・美股ETF</text>
+    <text x="64" y="482" font-size="10" fill="#8FA3B8">各分價值／升溫兩區</text>
+    <text x="64" y="498" font-size="10" fill="#8FA3B8">營收成長%・股價・漲跌幅</text>
+    <text x="64" y="512" font-size="9.5" fill="#5C7086">點欄位標題即排序</text>
+
+    <rect x="50" y="524" width="210" height="52" rx="7" fill="#18202A" stroke="#26323F"/>
+    <text x="64" y="543" font-size="11.5" font-weight="600" fill="#E8EEF4">排行與工具</text>
+    <text x="64" y="559" font-size="10" fill="#8FA3B8">台股成交金額排行</text>
+    <text x="64" y="571" font-size="9.5" fill="#7A4E4E">ETF共同持股・哨兵系統（離屏）</text>
+
+    <rect x="50" y="584" width="210" height="66" rx="7" fill="#18202A" stroke="#26323F"/>
+    <text x="64" y="603" font-size="11.5" font-weight="600" fill="#E8EEF4">大盤詳情</text>
+    <text x="64" y="619" font-size="10" fill="#8FA3B8">頂部 ticker 點入</text>
+    <text x="64" y="633" font-size="10" fill="#8FA3B8">加權・櫃買・台指近月</text>
+    <text x="64" y="645" font-size="9.5" fill="#5C7086">指數貢獻排行・無底部 tab</text>
+  </g>
+
+  <!-- ─── 自選 ─── -->
+  <g>
+    <rect x="276" y="376" width="210" height="42" rx="8" fill="#12262A" stroke="#3FB8AF"/>
+    <text x="290" y="396" font-size="14" font-weight="600" fill="#3FB8AF">自選</text>
+    <text x="290" y="411" font-size="10" fill="#A9C4CE">部位控制主畫面</text>
+
+    <rect x="276" y="430" width="210" height="94" rx="7" fill="#18202A" stroke="#26323F"/>
+    <text x="290" y="449" font-size="11.5" font-weight="600" fill="#E8EEF4">調節庫存（預設）</text>
+    <text x="290" y="466" font-size="10" fill="#8FA3B8">全部／台股／美股庫存</text>
+    <text x="290" y="482" font-size="10" fill="#8FA3B8">今日損益・累積損益・市值</text>
+    <text x="290" y="498" font-size="10" fill="#3FB8AF">位階・建議調節金額</text>
+    <text x="290" y="513" font-size="10" fill="#3FB8AF">建議調節股數</text>
+
+    <rect x="276" y="532" width="210" height="62" rx="7" fill="#18202A" stroke="#26323F"/>
+    <text x="290" y="551" font-size="11.5" font-weight="600" fill="#E8EEF4">布局自選</text>
+    <text x="290" y="567" font-size="10" fill="#8FA3B8">尚未持有的觀察標的</text>
+    <text x="290" y="583" font-size="10" fill="#3FB8AF">位階股數・風控股數</text>
+
+    <rect x="276" y="602" width="210" height="48" rx="7" fill="#22161A" stroke="#7A4E4E"/>
+    <text x="290" y="621" font-size="11" font-weight="600" fill="#E5A0A0">唯一手動維護處</text>
+    <text x="290" y="638" font-size="9.5" fill="#C99A9A">ark-sync 從 Shioaji 灌入</text>
+  </g>
+
+  <!-- ─── 運算 ─── -->
+  <g>
+    <rect x="502" y="376" width="210" height="42" rx="8" fill="#2A2113" stroke="#F4A340"/>
+    <text x="516" y="396" font-size="14" font-weight="600" fill="#F4A340">運算</text>
+    <text x="516" y="411" font-size="10" fill="#D9C4A5">擇時 ＋ 目標管理</text>
+
+    <rect x="502" y="430" width="210" height="88" rx="7" fill="#18202A" stroke="#26323F"/>
+    <text x="516" y="449" font-size="11.5" font-weight="600" fill="#E8EEF4">風控運算</text>
+    <text x="516" y="466" font-size="10" fill="#8FA3B8">五指標 + 庫存 + 現金</text>
+    <text x="516" y="482" font-size="10" fill="#F4A340">→ 持股配置建議 X%</text>
+    <text x="516" y="498" font-size="10" fill="#8FA3B8">建議持股・建議閒錢</text>
+    <text x="516" y="512" font-size="9.5" fill="#5C7086">有更新倒數，指標定期重算</text>
+
+    <rect x="502" y="526" width="210" height="76" rx="7" fill="#18202A" stroke="#26323F"/>
+    <text x="516" y="545" font-size="11.5" font-weight="600" fill="#E8EEF4">離職倒數</text>
+    <text x="516" y="561" font-size="10" fill="#8FA3B8">距離離職日還有 N 年月日</text>
+    <text x="516" y="577" font-size="10" fill="#8FA3B8">目標金額（每月／每日）</text>
+    <text x="516" y="592" font-size="10" fill="#8FA3B8">達成進度%・報酬趨勢</text>
+
+    <rect x="502" y="610" width="210" height="64" rx="7" fill="#18202A" stroke="#26323F"/>
+    <text x="516" y="629" font-size="11.5" font-weight="600" fill="#E8EEF4">方舟啟航</text>
+    <text x="516" y="645" font-size="10" fill="#8FA3B8">方舟序號・啟動日</text>
+    <text x="516" y="661" font-size="10" fill="#8FA3B8">累積已實現報酬・歷史紀錄</text>
+  </g>
+
+  <!-- ─── 活動中心 ─── -->
+  <g>
+    <rect x="728" y="376" width="210" height="42" rx="8" fill="#2A1622" stroke="#F472B6"/>
+    <text x="742" y="396" font-size="14" font-weight="600" fill="#F472B6">活動中心</text>
+    <text x="742" y="411" font-size="10" fill="#D9A5BF">社群與導師制度</text>
+
+    <rect x="728" y="430" width="210" height="58" rx="7" fill="#18202A" stroke="#26323F"/>
+    <text x="742" y="449" font-size="11.5" font-weight="600" fill="#E8EEF4">個人看板</text>
+    <text x="742" y="466" font-size="10" fill="#8FA3B8">關注中・我的收藏・我的貼文</text>
+    <text x="742" y="481" font-size="9.5" fill="#5C7086">可篩選作者・最熱／最新</text>
+
+    <rect x="728" y="496" width="210" height="68" rx="7" fill="#18202A" stroke="#26323F"/>
+    <text x="742" y="515" font-size="11.5" font-weight="600" fill="#E8EEF4">主題看板</text>
+    <text x="742" y="532" font-size="10" fill="#8FA3B8">綜合討論板・投資心法</text>
+    <text x="742" y="548" font-size="10" fill="#8FA3B8">健康擺渡・復盤筆記</text>
+    <text x="742" y="559" font-size="9.5" fill="#5C7086">最熱／最新</text>
+
+    <rect x="728" y="572" width="210" height="86" rx="7" fill="#18202A" stroke="#26323F"/>
+    <text x="742" y="591" font-size="11.5" font-weight="600" fill="#E8EEF4">活動中心</text>
+    <text x="742" y="608" font-size="10" fill="#8FA3B8">聊天室：台股・美股</text>
+    <text x="742" y="622" font-size="10" fill="#8FA3B8">損益對帳×離職倒數</text>
+    <text x="742" y="636" font-size="10" fill="#8FA3B8">方舟救濟・一起造船</text>
+    <text x="742" y="651" font-size="10" fill="#F472B6">方舟擺渡人名冊（依地區）</text>
+  </g>
+
+  <!-- ─── 方舟投資 ─── -->
+  <g>
+    <rect x="954" y="376" width="210" height="42" rx="8" fill="#211A33" stroke="#A78BFA"/>
+    <text x="968" y="396" font-size="14" font-weight="600" fill="#A78BFA">方舟投資</text>
+    <text x="968" y="411" font-size="10" fill="#C3B4E8">內容與教育</text>
+
+    <rect x="954" y="430" width="210" height="66" rx="7" fill="#18202A" stroke="#26323F"/>
+    <text x="968" y="449" font-size="11.5" font-weight="600" fill="#E8EEF4">達人觀點</text>
+    <text x="968" y="466" font-size="10" fill="#8FA3B8">文字分析文章</text>
+    <text x="968" y="481" font-size="10" fill="#A78BFA">可只看與你庫存相關的</text>
+    <text x="968" y="492" font-size="9.5" fill="#5C7086">官方 SOP 系列在這裡</text>
+
+    <rect x="954" y="504" width="210" height="48" rx="7" fill="#18202A" stroke="#26323F"/>
+    <text x="968" y="523" font-size="11.5" font-weight="600" fill="#E8EEF4">外部精華</text>
+    <text x="968" y="540" font-size="10" fill="#8FA3B8">短影片・觀看數・時長</text>
+
+    <rect x="954" y="560" width="210" height="48" rx="7" fill="#18202A" stroke="#26323F"/>
+    <text x="968" y="579" font-size="11.5" font-weight="600" fill="#E8EEF4">舟聲電台</text>
+    <text x="968" y="596" font-size="10" fill="#8FA3B8">Podcast・主講人・播放次數</text>
+
+    <rect x="954" y="616" width="210" height="60" rx="7" fill="#18202A" stroke="#26323F"/>
+    <text x="968" y="635" font-size="11.5" font-weight="600" fill="#E8EEF4">個股詳情</text>
+    <text x="968" y="652" font-size="10" fill="#8FA3B8">24 分頁：K線・籌碼・法人</text>
+    <text x="968" y="667" font-size="10" fill="#8FA3B8">EPS・本益比・產業報告</text>
+  </g>
+
+  <!-- ─── 設定 ─── -->
+  <g>
+    <rect x="1180" y="376" width="210" height="42" rx="8" fill="#1C222A" stroke="#94A3B8"/>
+    <text x="1194" y="396" font-size="14" font-weight="600" fill="#94A3B8">設定</text>
+    <text x="1194" y="411" font-size="10" fill="#B4C0CC">帳務與版本</text>
+
+    <rect x="1180" y="430" width="210" height="66" rx="7" fill="#18202A" stroke="#26323F"/>
+    <text x="1194" y="449" font-size="11.5" font-weight="600" fill="#E8EEF4">會員資訊</text>
+    <text x="1194" y="466" font-size="10" fill="#8FA3B8">權限・到期日・綁定擺渡人</text>
+    <text x="1194" y="482" font-size="10" fill="#E5A0A0">含 email 與序號，勿外洩</text>
+
+    <rect x="1180" y="504" width="210" height="56" rx="7" fill="#18202A" stroke="#26323F"/>
+    <text x="1194" y="523" font-size="11.5" font-weight="600" fill="#E8EEF4">版本號</text>
+    <text x="1194" y="540" font-size="10" fill="#8FA3B8">Version: 1.7.4.0</text>
+    <text x="1194" y="553" font-size="9.5" fill="#F4A340">ark-explore 的快取鍵</text>
+
+    <rect x="1180" y="568" width="210" height="90" rx="7" fill="#18202A" stroke="#26323F"/>
+    <text x="1194" y="587" font-size="11.5" font-weight="600" fill="#E8EEF4">其他項目</text>
+    <text x="1194" y="604" font-size="10" fill="#E5A0A0">APP使用教學（開瀏覽器）</text>
+    <text x="1194" y="619" font-size="10" fill="#E5A0A0">清除快取（會重啟 App）</text>
+    <text x="1194" y="634" font-size="10" fill="#8FA3B8">升級訂閱・退訂退款</text>
+    <text x="1194" y="650" font-size="9.5" fill="#5C7086">全 App 僅此處涉及金流</text>
+  </g>
+
+  <!-- ─── 作用列 ─── -->
+  <g>
+    <rect x="50" y="694" width="210" height="46" rx="7" fill="#141C25" stroke="#F4A340" stroke-opacity="0.35"/>
+    <text x="64" y="713" font-size="10.5" font-weight="600" fill="#F4A340">作用</text>
+    <text x="64" y="730" font-size="10" fill="#A9B6C4">找標的，不涉及你的持股</text>
+
+    <rect x="276" y="694" width="210" height="46" rx="7" fill="#141C25" stroke="#3FB8AF" stroke-opacity="0.35"/>
+    <text x="290" y="713" font-size="10.5" font-weight="600" fill="#3FB8AF">作用</text>
+    <text x="290" y="730" font-size="10" fill="#A9B6C4">管部位，也是全 App 的輸入</text>
+
+    <rect x="502" y="694" width="210" height="46" rx="7" fill="#141C25" stroke="#F4A340" stroke-opacity="0.35"/>
+    <text x="516" y="713" font-size="10.5" font-weight="600" fill="#F4A340">作用</text>
+    <text x="516" y="730" font-size="10" fill="#A9B6C4">決定曝險，追蹤財務目標</text>
+
+    <rect x="728" y="694" width="210" height="46" rx="7" fill="#141C25" stroke="#F472B6" stroke-opacity="0.35"/>
+    <text x="742" y="713" font-size="10.5" font-weight="600" fill="#F472B6">作用</text>
+    <text x="742" y="730" font-size="10" fill="#A9B6C4">社群互動，與計算無關</text>
+
+    <rect x="954" y="694" width="210" height="46" rx="7" fill="#141C25" stroke="#A78BFA" stroke-opacity="0.35"/>
+    <text x="968" y="713" font-size="10.5" font-weight="600" fill="#A78BFA">作用</text>
+    <text x="968" y="730" font-size="10" fill="#A9B6C4">學習與觀點，新手起點</text>
+
+    <rect x="1180" y="694" width="210" height="46" rx="7" fill="#141C25" stroke="#94A3B8" stroke-opacity="0.35"/>
+    <text x="1194" y="713" font-size="10.5" font-weight="600" fill="#94A3B8">作用</text>
+    <text x="1194" y="730" font-size="10" fill="#A9B6C4">帳務與版本查詢</text>
+  </g>
+
+  <!-- ══════════════════ 頁尾 ══════════════════ -->
+  <line x1="50" y1="768" x2="1390" y2="768" stroke="#22303F"/>
+  <text x="50" y="792" font-size="12" font-weight="600" fill="#E8EEF4">AX 自動化注意</text>
+  <g font-size="10.5" fill="#8FA3B8">
+    <text x="50" y="812">1. App 必須保持前景，切到背景會被 iOS 暫停，所有 AX 查詢失效</text>
+    <text x="50" y="830">2. 返回鍵標籤各頁不一致：back ／ 方舟運算（左上 logo）／ popup close（右上）—— 用位置判定比用名字可靠</text>
+    <text x="50" y="848">3. App 會記住子分頁選擇：走過空的「美股庫存」後，每次回到自選都落在那頁，兄弟節點全部走不到</text>
+    <text x="50" y="866">4. 橫向捲軸元素 x 到 1247 而視窗僅 375 寬，離屏元素 AXPress 回傳 0 但靜默失效</text>
+    <text x="50" y="884">5. 小寫英文 AX id ＝ 控制項（add stock off、watchlist edit…），內容區段一律中文</text>
+  </g>
+  <text x="1390" y="884" font-size="10" fill="#41525F" text-anchor="end">
+    深度 2・未走訪 472 元素・影音內容 AX 讀不到
+  </text>
+</svg>
