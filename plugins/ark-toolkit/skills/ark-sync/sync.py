@@ -342,6 +342,7 @@ def main():
     import ax
 
     pid = ax.ensure_ready()       # 不搶焦點：ARK 視窗可見即可，使用者可繼續用電腦
+    pid = ark.ensure_responsive(ax, pid)   # 殭屍態（事件層死掉）在這裡自癒
     print("讀取 ARK 庫存…")
     holdings = ark.read_holdings(ax, pid)
     declared = ark.read_declared_count(ax, pid)
@@ -378,25 +379,33 @@ def main():
 
     print("\n開始執行…")
     ark.enter_edit_page(ax, pid)
-    ok = fail = 0
+    ok = 0
     applied = []
-    for action, code, qty, price, _cur in plan:
-        if action == "delete" and not args.allow_delete:
-            continue
-        print(f"  {action} {code}")
-        if action == "update":
-            done = update_holding(ax, pid, code, qty, price)
-        elif action == "add":
-            done = add_holding(ax, pid, code, qty, price)
-        else:
-            done = delete_holding(ax, pid, code)
-        if done:
-            ok += 1
-            applied.append([action, code])
-            print(f"    ✅ {code} 完成")
-        else:
-            fail += 1
-        ark.enter_edit_page(ax, pid)      # 每檔後重置列表位置，避免遮擋
+    todo = [(a, c, q, p) for a, c, q, p, _cur in plan
+            if not (a == "delete" and not args.allow_delete)]
+    for attempt in (1, 2):
+        # 失敗項重試一輪：AX 操作偶發失手（實例：2026-08-11 的 00635U 刪除），
+        # 同樣的操作重跑一次多半就過；仍失敗才回報，交給收尾的 --dry-run 複驗
+        failed = []
+        for action, code, qty, price in todo:
+            print(f"  {action} {code}" + ("（重試）" if attempt == 2 else ""))
+            if action == "update":
+                done = update_holding(ax, pid, code, qty, price)
+            elif action == "add":
+                done = add_holding(ax, pid, code, qty, price)
+            else:
+                done = delete_holding(ax, pid, code)
+            if done:
+                ok += 1
+                applied.append([action, code])
+                print(f"    ✅ {code} 完成")
+            else:
+                failed.append((action, code, qty, price))
+            ark.enter_edit_page(ax, pid)  # 每檔後重置列表位置，避免遮擋
+        todo = failed
+        if not todo:
+            break
+    fail = len(todo)
 
     after = ark.read_declared_count(ax, pid)     # 用 App 自己宣告的檔數收尾，不用推算的
     entry = {

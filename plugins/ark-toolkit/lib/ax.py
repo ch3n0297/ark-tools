@@ -26,12 +26,18 @@ from Quartz import (
     CGEventPostToPid,
     CGEventSourceCreate,
     CGWarpMouseCursorPosition,
+    CGWindowListCopyWindowInfo,
     kCGEventLeftMouseDown,
     kCGEventLeftMouseUp,
     kCGEventSourceStateHIDSystemState,
     kCGHIDEventTap,
     kCGMouseButtonLeft,
+    kCGNullWindowID,
     kCGScrollEventUnitPixel,
+    kCGWindowListOptionAll,
+    kCGWindowName,
+    kCGWindowNumber,
+    kCGWindowOwnerPID,
 )
 
 BUNDLE_ID = "com.galaxy.ark"
@@ -90,6 +96,42 @@ def activate(timeout=10.0):
         time.sleep(0.3)
     raise ArkNotRunning("方舟運算已啟動但讀不到視窗"
                         "（可能被最小化、尚未完成前景切換，或停在登入頁）")
+
+
+def screenshot(pid, path):
+    """截 ARK 主視窗存到 path，回傳是否成功。
+
+    AX 讀值與畫面可能不同步（AXValue 提交前不更新、AXPress 假成功），
+    卡關時看畫面是最終手段；無人值守失敗也靠這個留現場。window id 每次
+    動態解析——App 重啟後 id 會變，快取住的 id 只會截到空氣。
+    """
+    for w in CGWindowListCopyWindowInfo(kCGWindowListOptionAll, kCGNullWindowID) or []:
+        if w.get(kCGWindowOwnerPID) == pid and w.get(kCGWindowName):
+            r = subprocess.run(["screencapture", "-o", "-x",
+                                f"-l{w[kCGWindowNumber]}", path],
+                               capture_output=True, check=False)
+            return r.returncode == 0
+    return False
+
+
+def restart_app(timeout=40.0):
+    """終止並重啟 ARK，回傳新 pid（登入態保留）。
+
+    App 從最小化喚醒後可能進入殭屍態：AX 讀得到、內部計時器在走，但
+    AXPress／座標點擊／activate 全部無效（press 照樣回成功）。實測唯一
+    解法是重啟（2026-08-11）。呼叫端應先以 ark.ensure_responsive 探測，
+    確認殭屍才走到這裡。
+    """
+    app = _running_app()
+    if app is not None:
+        app.terminate()
+        deadline = time.time() + 10.0
+        while _running_app() is not None and time.time() < deadline:
+            time.sleep(0.5)
+        if _running_app() is not None:
+            app.forceTerminate()
+            time.sleep(1.0)
+    return activate(timeout)
 
 
 def ensure_ready(timeout=10.0):

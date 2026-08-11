@@ -382,5 +382,122 @@ class TestPlatformGuard(unittest.TestCase):
         sync.check_platform("darwin")
 
 
+class FakeAx:
+    """模擬 ax 模組：press／click 可各自設定有效與否，重啟可設定是否治癒。
+
+    頁面模型：window() 回傳頁名字串，by_desc 依頁面的 desc 集合回應；
+    press/click 有效時把「自選／運算」的按壓轉成換頁。
+    """
+    PAGES = {"watchlist": {"自選", "運算", "調節 庫存", "布局 自選"},
+             "posture": {"自選", "運算", "風控 運算"}}
+
+    def __init__(self, page="posture", press_effective=True,
+                 click_effective=True, restart_fixes=False):
+        self.page = page
+        self.press_effective = press_effective
+        self.click_effective = click_effective
+        self.restart_fixes = restart_fixes
+        self.restarted = False
+        self.clicks = []
+        self._last_pressed = None
+
+    def window(self, pid):
+        return self.page
+
+    def by_desc(self, w, text):
+        page = w if isinstance(w, str) else self.page
+        return [f"EL:{text}"] if text in self.PAGES[page] else []
+
+    def _act(self, el):
+        name = el.split(":", 1)[1]
+        if name == "自選":
+            self.page = "watchlist"
+        elif name == "運算":
+            self.page = "posture"
+
+    def press(self, el):
+        self._last_pressed = el
+        if self.press_effective:
+            self._act(el)
+        return 0                                   # AXPress 永遠「成功」
+
+    def click(self, x, y):
+        self.clicks.append((x, y))
+        if self.click_effective and self._last_pressed:
+            self._act(self._last_pressed)
+
+    def point(self, el):
+        return (0.0, 0.0)
+
+    def size(self, el):
+        return (10.0, 10.0)
+
+    def restart_app(self):
+        self.restarted = True
+        self.page = "watchlist"
+        if self.restart_fixes:
+            self.press_effective = True
+        return 99
+
+
+class TestMonthTotal(unittest.TestCase):
+    def test_取第一個純金額文字(self):
+        texts = ["總計當月已實現報酬", "4,174 元", "日期", "報酬金額",
+                 "08月11日, 4,174 元"]
+        self.assertEqual(ark.month_total_from_texts(texts), 4174.0)
+
+    def test_日期列不會被誤認(self):
+        self.assertIsNone(ark.month_total_from_texts(["08月11日, 4,174 元"]))
+
+    def test_零元(self):
+        self.assertEqual(ark.month_total_from_texts(["0 元"]), 0.0)
+
+
+class TestPressVerified(unittest.TestCase):
+    def pred(self, fake):
+        return lambda w: bool(fake.by_desc(w, "調節 庫存"))
+
+    def test_press有效直接通過(self):
+        fake = FakeAx()
+        w = ark.press_verified(fake, 1, "EL:自選", self.pred(fake), "去自選",
+                               timeout=0.05)
+        self.assertEqual(w, "watchlist")
+        self.assertEqual(fake.clicks, [])          # 不需要 fallback
+
+    def test_press假成功時座標點擊兜底(self):
+        fake = FakeAx(press_effective=False)
+        w = ark.press_verified(fake, 1, "EL:自選", self.pred(fake), "去自選",
+                               timeout=0.05)
+        self.assertEqual(w, "watchlist")
+        self.assertEqual(len(fake.clicks), 1)
+
+    def test_兩種方式都無效才報錯(self):
+        fake = FakeAx(press_effective=False, click_effective=False)
+        with self.assertRaises(RuntimeError):
+            ark.press_verified(fake, 1, "EL:自選", self.pred(fake), "去自選",
+                               timeout=0.05)
+
+
+class TestEnsureResponsive(unittest.TestCase):
+    def test_UI健康時不重啟(self):
+        fake = FakeAx()
+        pid = ark.ensure_responsive(fake, 1, probe_timeout=0.05)
+        self.assertEqual(pid, 1)
+        self.assertFalse(fake.restarted)
+
+    def test_殭屍態重啟後治癒(self):
+        fake = FakeAx(press_effective=False, click_effective=False,
+                      restart_fixes=True)
+        pid = ark.ensure_responsive(fake, 1, probe_timeout=0.05)
+        self.assertEqual(pid, 99)
+        self.assertTrue(fake.restarted)
+
+    def test_重啟仍無效則報錯(self):
+        fake = FakeAx(press_effective=False, click_effective=False)
+        with self.assertRaises(RuntimeError):
+            ark.ensure_responsive(fake, 1, probe_timeout=0.05)
+        self.assertTrue(fake.restarted)            # 有試過重啟才放棄
+
+
 if __name__ == "__main__":
     unittest.main()

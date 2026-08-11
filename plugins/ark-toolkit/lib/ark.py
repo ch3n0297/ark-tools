@@ -3,6 +3,7 @@
 本檔頂層不匯入 pyobjc —— AX 操作一律以 `ax` 模組當參數傳入，
 因此純解析邏輯可在任何平台測試。
 """
+import datetime as _dt
 import json
 import os
 import re
@@ -308,6 +309,62 @@ def wait_for(ax, pid, pred, what, timeout=10.0):
     raise RuntimeError(f"等待逾時：{what}")
 
 
+def press_verified(ax, pid, el, pred, what, timeout=6.0):
+    """AXPress 後驗證 pred 成立才算數；沒生效改座標點擊再驗一次。
+
+    AXPress 對被遮擋元素、或事件層死掉的 App 會**回成功但實際無效**——
+    按了不驗證，失敗只會在更遠處的 wait_for 逾時，錯誤現場早就不見了。
+    回傳驗證後的 window；兩種方式都無效則拋 RuntimeError。
+    """
+    ax.press(el)
+    try:
+        return wait_for(ax, pid, pred, what, timeout=timeout)
+    except RuntimeError:
+        p, s = ax.point(el), ax.size(el)
+        ax.click(p[0] + s[0] / 2, p[1] + s[1] / 2)
+        return wait_for(ax, pid, pred, what, timeout=timeout)
+
+
+def ensure_responsive(ax, pid, probe_timeout=6.0):
+    """驗證 UI 事件層活著；死了（殭屍態）就重啟 App 一次，回傳可用 pid。
+
+    殭屍態＝AX 讀得到、更新倒數在走，但所有輸入事件無效且 AXPress 仍回
+    成功（2026-08-11 實測）。唯讀檢查驗不出來，只能實際按一顆會改變頁面
+    地標的底部 tab。探測完 App 停在自選或運算頁，都是後續導航的合法起點。
+    """
+    def probe(pid):
+        w = ax.window(pid)
+        if not ax.by_desc(w, "自選"):            # 停在子頁：先退回 tab 根頁
+            back = ax.by_desc(w, "back")
+            if not back:
+                return False
+            ax.press(back[0])
+            time.sleep(1.0)
+            w = ax.window(pid)
+            if not ax.by_desc(w, "自選"):
+                return False
+        at_watchlist = bool(ax.by_desc(w, "調節 庫存") or ax.by_desc(w, "布局 自選"))
+        target, landmark = (("運算", "風控 運算") if at_watchlist
+                            else ("自選", "調節 庫存"))
+        tab = ax.by_desc(w, target)
+        if not tab:
+            return False
+        ax.press(tab[0])
+        try:
+            wait_for(ax, pid, lambda w: bool(ax.by_desc(w, landmark)),
+                     f"切到{target}", timeout=probe_timeout)
+            return True
+        except RuntimeError:
+            return False
+
+    if probe(pid):
+        return pid
+    pid = ax.restart_app()
+    if not probe(pid):
+        raise RuntimeError("ARK UI 無回應，重啟後仍無效")
+    return pid
+
+
 def visible_codes(ax, pid):
     return tuple(sorted(h.code for h in
                         (parse_holding(d) for _e, d in ax.descs(ax.window(pid), "AXStaticText"))
@@ -360,13 +417,27 @@ def ensure_adjust_mode(ax, pid):
 
 
 def goto_adjust_page(ax, pid):
-    """確保停在（非編輯的）調節庫存頁，並切到台股分頁"""
+    """確保停在（非編輯的）調節庫存頁，並切到台股分頁。
+
+    「在自選頁」的判準用「調節 庫存／布局 自選」模式鈕，不能用 watchlist edit：
+    運算頁的離職倒數模式右上也有一顆同名的筆。停在別的 tab 根頁（如運算頁）
+    時沒有 back 鈕可按，要按底部「自選」tab 過去。
+    """
+    def at_watchlist(w):
+        return bool(ax.by_desc(w, "調節 庫存") or ax.by_desc(w, "布局 自選"))
+
     w = ax.window(pid)
-    if not ax.by_desc(w, "watchlist edit"):
+    if not at_watchlist(w):
         back = ax.by_desc(w, "back")
         if back:
             ax.press(back[0])
-    wait_for(ax, pid, lambda w: bool(ax.by_desc(w, "watchlist edit")), "返回調節庫存頁")
+            w = wait_for(ax, pid, lambda w: bool(ax.by_desc(w, "自選")),
+                         "返回含底部分頁的頁面")
+        tab = ax.by_desc(w, "自選")
+        if tab:
+            press_verified(ax, pid, tab[0], at_watchlist, "進入自選頁")
+        else:
+            wait_for(ax, pid, at_watchlist, "進入自選頁")
     w = ensure_adjust_mode(ax, pid)
     tw = ax.by_desc(w, "台股庫存")
     if tw:
@@ -718,15 +789,15 @@ def goto_posture_page(ax, pid):
     calc = ax.by_desc(w, "運算")
     if not calc:
         return None
-    ax.press(calc[0])
-    w = wait_for(ax, pid, lambda w: bool(ax.by_desc(w, "風控 運算")), "進入運算頁")
+    w = press_verified(ax, pid, calc[0],
+                       lambda w: bool(ax.by_desc(w, "風控 運算")), "進入運算頁")
 
     # 運算頁有三個模式（方舟啟航／風控運算／離職倒數），選擇會被記住，
     # 而「風控 運算」是三個模式都有的切換鈕——等到它出現不代表已經在那一頁。
     # 不明確切過去的話會讀到目標管理頁，然後靜默回傳 None。
     if not ax.by_desc(w, "持股配置建議"):
-        ax.press(ax.by_desc(w, "風控 運算")[0])
-        w = wait_for(ax, pid, lambda w: bool(ax.by_desc(w, "持股配置建議")), "切到風控運算")
+        w = press_verified(ax, pid, ax.by_desc(w, "風控 運算")[0],
+                           lambda w: bool(ax.by_desc(w, "持股配置建議")), "切到風控運算")
     return w
 
 
@@ -761,5 +832,103 @@ def read_posture(ax, pid):
         suggested_cash=total - suggested_value,
         adjust_amount=adjust,
     )
+
+
+def month_total_from_texts(texts):
+    """報酬紀錄頁文字 → 「總計當月已實現報酬」金額；解析不到回 None。
+
+    第一個 fullmatch「N 元」就是總計——日期列長「08月11日, 4,174 元」，
+    不會整串匹配。
+    """
+    for t in texts:
+        m = re.fullmatch(r"([\d,]+) 元", t or "")
+        if m:
+            return num(m.group(1))
+    return None
+
+
+def record_daily_return(ax, pid, amount, date=None):
+    """把當日已實現獲利記進「運算 › 離職倒數」，回傳是否確認寫入。
+
+    App 紀律：只記獲利日（虧損由本金減少反映），amount ≤ 0 直接回 False。
+    當日已有紀錄則點開該列改值（重跑冪等）。欄位 AXValue 在儲存前讀不到
+    （ark-app-map 陷阱 17），驗證走「儲存後外層總計＝舊總計−舊值＋新值」。
+    結束一律切回風控運算再停自選頁——停在離職倒數會讓隔日 read_posture
+    靜默失敗。
+    """
+    amount = int(round(amount))
+    if amount <= 0:
+        return False
+    d = date or _dt.date.today().isoformat()
+    day_label = f"{int(d[5:7]):02d}月{int(d[8:10]):02d}日"
+
+    try:
+        w = goto_posture_page(ax, pid)
+        if w is None:
+            return False
+        w = press_verified(ax, pid, ax.by_desc(w, "離職 倒數")[0],
+                           lambda w: bool(ax.by_desc(w, "目標離職金額")),
+                           "切到離職倒數")
+        pen = ax.by_desc(w, "watchlist edit")
+        if not pen:
+            return False
+        w = press_verified(ax, pid, pen[0],
+                           lambda w: bool(ax.by_desc(w, "記錄今日報酬")),
+                           "進入報酬紀錄頁")
+
+        texts = [dsc for _e, dsc in ax.descs(w, "AXStaticText")]
+        before_total = month_total_from_texts(texts)
+        if before_total is None:
+            return False
+        today_row = next((t for t in texts if t.startswith(day_label)), None)
+        old = 0.0
+        if today_row:
+            m = re.search(r"([\d,]+) 元", today_row)
+            old = num(m.group(1)) if m else 0.0
+            opener = ax.by_desc(w, today_row)[0]       # 已有紀錄：點列改值
+        else:
+            opener = ax.by_desc(w, "記錄今日報酬")[0]   # 沒有：新增
+        w = press_verified(ax, pid, opener,
+                           lambda w: bool(ax.by_desc(w, "儲存")), "開報酬彈窗")
+
+        fields = ax.text_fields(w)
+        if not fields:
+            return False
+        ax.press(fields[0])
+        time.sleep(1.0)                    # 等游標與「完成」浮鈕
+        ax.backspace(pid, 12)              # 清舊值；⊗ 會掉焦點，不用
+        time.sleep(0.4)
+        ax.keystroke(pid, str(amount))
+        time.sleep(0.6)
+        ax.keystroke(pid, "\r")            # 收鍵盤——開著會遮住儲存鈕
+        time.sleep(0.8)
+        save = ax.by_desc(ax.window(pid), "儲存")
+        if not save:
+            return False
+        ax.press(save[0])
+
+        expect = before_total - old + amount
+        try:
+            wait_for(ax, pid,
+                     lambda w: month_total_from_texts(
+                         [dsc for _e, dsc in ax.descs(w, "AXStaticText")]) == expect,
+                     "報酬寫入後總計更新")
+        except RuntimeError:
+            return False
+        return True
+    finally:
+        # 成敗都要把 App 停回安全狀態：報酬紀錄 → 離職倒數 → 風控運算 → 自選
+        close = ax.by_desc(ax.window(pid), "popup close")
+        if close:
+            ax.press(close[0])
+            time.sleep(0.6)
+        back = ax.by_desc(ax.window(pid), "back")
+        if back:
+            ax.press(back[0])
+            time.sleep(0.8)
+        if goto_posture_page(ax, pid) is not None:
+            tab = ax.by_desc(ax.window(pid), "自選")
+            if tab:
+                ax.press(tab[0])
 
 

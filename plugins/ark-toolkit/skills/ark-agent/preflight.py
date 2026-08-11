@@ -8,7 +8,8 @@
 #     "shioaji",
 # ]
 # ///
-"""前置檢查：確認排程真的跑得起來。**完全無副作用，只讀。**
+"""前置檢查：確認排程真的跑得起來。**不落資料、不下單**；會切換 ARK 頁面、
+偵測到殭屍態（UI 事件層死掉）時代為重啟 App——那正是排程當天會炸的原因。
 
 存在的理由是 macOS 的輔助使用（Accessibility）權限是**按執行檔授權**的——
 Terminal 拿到的權限不會自動延伸到 launchd job。這件事若等到 10:00 真要下單時
@@ -27,6 +28,7 @@ import source  # noqa: E402
 def check_ax():
     import ax
     pid = ax.ensure_ready()
+    pid = ark.ensure_responsive(ax, pid)   # 唯讀檢查驗不出殭屍態，要實按一次
     w = ax.window(pid)
     if w is None:
         return "AX 讀不到主視窗"

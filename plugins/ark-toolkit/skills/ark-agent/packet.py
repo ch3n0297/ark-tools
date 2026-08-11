@@ -226,7 +226,7 @@ def main():
     import ax
     import shioaji as sj
 
-    pid = ax.activate()
+    pid = ark.ensure_responsive(ax, ax.activate())   # 殭屍態在這裡自癒，不留到讀取中途
     print("讀取 ARK…", flush=True)
     holdings, declared, posture = read_ark(ax, pid)
     print(f"  {len(holdings)} 檔", flush=True)
