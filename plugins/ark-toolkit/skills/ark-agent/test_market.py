@@ -118,6 +118,29 @@ class TestFetchDaily(unittest.TestCase):
             cached = market.load_cache("2330", d)                 # 快取保留全部
             self.assertEqual(len(cached), 2)
 
+    def test_快取末日越過區間時不呼叫API(self):
+        """packet 先抓到今日、settle_previous 再查昨日：fetch_start 會算成
+        快取末日（今日）> end（昨日），Shioaji 對 start > end 回 400。
+        區間內都是收盤後的完整日K，必須直接回快取、不打 API。"""
+        with tempfile.TemporaryDirectory() as d:
+            market.save_cache("2330", [{"date": "2026-08-03", "close": 101.5},
+                                       {"date": "2026-08-04", "close": 106.2}], d)
+            api = FakeApi(self.kb())
+            bars = market.fetch_daily(api, "2330", "2026-08-03", "2026-08-03", d)
+            self.assertEqual(api.calls, [])
+            self.assertEqual([b["date"] for b in bars], ["2026-08-03"])
+
+    def test_快取末日越過區間時休市日回空(self):
+        """settle_previous 以「回傳為空」判定休市——快取覆蓋下查無該日
+        （週末／假日）要回空 list，同樣不打 API。"""
+        with tempfile.TemporaryDirectory() as d:
+            market.save_cache("2330", [{"date": "2026-08-03", "close": 101.5},
+                                       {"date": "2026-08-04", "close": 106.2}], d)
+            api = FakeApi(self.kb())
+            bars = market.fetch_daily(api, "2330", "2026-08-02", "2026-08-02", d)
+            self.assertEqual(api.calls, [])
+            self.assertEqual(bars, [])
+
 
 class TestQuotesFromSnapshots(unittest.TestCase):
     def test_整理成以代號為鍵(self):

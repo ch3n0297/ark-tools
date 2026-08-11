@@ -95,6 +95,11 @@ def fetch_daily(api, code, start, end, directory=PRICE_DIR):
     """
     cached = load_cache(code, directory)
     fetch_start = max(start, cached[-1]["date"]) if cached else start
+    if cached and fetch_start > end:
+        # 快取末日已越過 end：區間內都是收盤後的完整日K，直接回快取。
+        # Shioaji 對 start > end 回 400——packet 先抓到今日、settle_previous
+        # 再查昨日就會走到這裡，不能把越界區間丟給 API。
+        return [b for b in cached if start <= b["date"] <= end]
     contract = api.Contracts.Stocks[code]
     kb = api.kbars(contract, start=fetch_start, end=end)
     fresh = daily_from_kbars(list(kb.ts), list(kb.Open), list(kb.High),
