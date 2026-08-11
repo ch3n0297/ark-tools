@@ -190,7 +190,8 @@ evaluate 只輸出點估計＋樣本數＋pending 筆數；60 日前瞻報酬要
   因為那些上限是為了限制無人值守時的爆炸半徑；紀律照守，繼承軌一股不賣。
   刻意獨立成一支腳本而非在 execute.py 開繞過旗標——那種旗標日後一定會被誤用
 - `prompts/decide.md` — 決策層的提示模板；`launchd/` — 三份排程設定
-- `integration_execute_simulation.py` — 委託路徑實機驗證（寫死 simulation，碰不到真錢）
+- 委託路徑實機驗證在 **ark-start** skill（`skills/ark-start/verify.py`，寫死 simulation，
+  碰不到真錢）——切 live 前先跑它
 - 持久化：`~/.ark-toolkit/agent/`（packets/、envelopes/、prices/、journal.jsonl、
   equity.jsonl、tracks.json、satellite_exits.jsonl、dividends.jsonl）
 

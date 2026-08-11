@@ -1,7 +1,7 @@
 {
   "name": "ark-toolkit",
-  "description": "以真實持倉（永豐 Shioaji API＋任意個券商 CSV/Excel 檔案帳戶，多帳戶合併）同步並分析方舟運算(ARK) App 的台股庫存。內建 ark-setup 帳戶清單精靈：macOS 原生視窗管理帳戶並安全收集憑證，機密不經對話上下文。透過 Accessibility API 操作無官方 API 的 App，提供靜默讀取（ark-read）、兩階段收集確認同步（ark-collect→ark-sync）、集中度與部位偏離分析、風控檢查、歷史快照復盤、全 App 功能地圖，以及 ark-agent 自動決策軌（盤中決策包、決策鎖定、自動下單、成交對回、滾動評估）。僅限 macOS。",
-  "version": "1.0.0",
+  "description": "以真實持倉（券商 API 帳戶＋任意個 CSV/Excel 檔案帳戶，多帳戶合併；API 目前支援永豐 Shioaji，架構可擴充）同步並分析方舟運算(ARK) App 的台股庫存。內建 ark-setup 帳戶清單精靈（macOS 原生視窗管理帳戶並安全收集憑證，機密不經對話上下文）與 ark-start 初次上手驗證軌（模擬單驗證委託路徑，通過後自動串接實際看單）。透過 Accessibility API 操作無官方 API 的 App，提供靜默讀取（ark-read）、兩階段收集確認同步（ark-collect→ark-sync）、集中度與部位偏離分析、風控檢查、歷史快照復盤、全 App 功能地圖，以及 ark-agent 自動決策軌（盤中決策包、決策鎖定、自動下單、成交對回、滾動評估）。僅限 macOS。",
+  "version": "1.1.0",
   "author": {
     "name": "hjcloog",
     "email": "hjcaieng@gmail.com"

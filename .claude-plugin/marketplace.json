@@ -1,6 +1,6 @@
 {
   "name": "ark-tools",
-  "description": "方舟運算(ARK) App 的持倉同步與分析工具（帳戶清單：永豐 Shioaji API＋券商 CSV/Excel，多帳戶合併）",
+  "description": "方舟運算(ARK) App 的持倉同步與分析工具（帳戶清單：券商 API＋CSV/Excel 檔案帳戶，多帳戶合併；API 目前支援永豐 Shioaji）",
   "owner": {
     "name": "hjcloog",
     "email": "hjcaieng@gmail.com"
@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "ark-toolkit",
-      "description": "以真實持倉（永豐 Shioaji API＋任意個券商 CSV/Excel 檔案帳戶，多帳戶合併）同步並分析方舟運算(ARK) App 的台股庫存。內建原生視窗帳戶清單精靈，提供靜默讀取、兩階段收集確認同步、集中度與部位偏離分析、風控檢查、歷史快照復盤，以及全 App 功能地圖。僅限 macOS。",
+      "description": "以真實持倉（券商 API 帳戶＋任意個 CSV/Excel 檔案帳戶，多帳戶合併；API 目前支援永豐 Shioaji）同步並分析方舟運算(ARK) App 的台股庫存。內建原生視窗帳戶清單精靈與初次上手驗證軌（模擬單驗證委託路徑），提供靜默讀取、兩階段收集確認同步、集中度與部位偏離分析、風控檢查、歷史快照復盤，以及全 App 功能地圖。僅限 macOS。",
       "author": {
         "name": "hjcloog"
       },

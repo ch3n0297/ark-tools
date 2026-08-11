@@ -1,6 +1,12 @@
 # ark-tools
 
-方舟運算(ARK) App 的持倉同步與分析工具（真實持倉為帳戶清單：永豐 Shioaji API＋任意個券商 CSV/Excel 檔案帳戶，多帳戶自動合併），可同時安裝到 **Claude Code** 與 **Codex**。
+方舟運算(ARK) App 的持倉同步與分析工具，可同時安裝到 **Claude Code** 與 **Codex**。
+
+「真實持倉」由帳戶清單組成，兩類帳戶可任意搭配、多帳戶自動合併：
+
+- **券商 API 帳戶** —— 直接串接券商查詢即時持倉。目前支援永豐 Shioaji，
+  架構上可擴充其他券商
+- **檔案帳戶** —— 任何券商匯出的 CSV／Excel 持股清單，無 API 也能對帳
 
 兩邊共用同一份 `skills/`，只是各自需要一份 metadata（`.claude-plugin/` 與 `.codex-plugin/`）。
 
@@ -8,10 +14,11 @@
 
 | Skill | 用途 |
 |---|---|
-| `ark-setup` | 帳戶清單設定精靈：管理永豐 Shioaji 與檔案帳戶（CSV/Excel），原生視窗安全收集憑證 |
+| `ark-setup` | 帳戶清單設定精靈：管理券商 API 與檔案帳戶，原生視窗安全收集憑證 |
+| `ark-start` | 初次上手驗證軌：模擬環境送單驗證委託路徑（不碰真錢），通過後自動串接實際看單 |
 | `ark-read` | 靜默讀取各帳戶即時持倉與合併結果（不碰 ARK、不彈視窗、只讀不寫） |
 | `ark-collect` | 兩階段同步的階段一：收集各帳戶持倉，確認後寫入當日快照 |
-| `ark-sync` | 兩階段同步的階段二：以真實持倉同步 ARK 庫存（修改／新增／刪除）；只有永豐時可直接執行 |
+| `ark-sync` | 兩階段同步的階段二：以真實持倉同步 ARK 庫存；只有 API 帳戶時可直接執行 |
 | `ark-analyze` | 集中度、與 App 建議部位的偏離、風控檢查、歷史快照復盤 |
 | `ark-explore` | 探索全 App 結構，產出功能地圖（以版本號當快取鍵，版本沒變就跳過） |
 | `ark-agent` | 自動交易決策軌：盤中決策包、依 ARK 紀律決策並鎖定、自動下單、成交對回、滾動評估 |
@@ -54,19 +61,18 @@ codex plugin marketplace upgrade ark-tools    # Codex（無單一 plugin 的 upd
 - **macOS**（依賴 Accessibility API 與 Apple Silicon 的 iOS App 相容層）
 - 方舟運算已安裝並登入（未開啟會自動代為啟動；未安裝會明確提示先從 App Store 安裝）
 - 終端機／IDE 已取得「輔助使用」權限（系統設定 → 隱私權與安全性 → 輔助使用）
-- [uv](https://docs.astral.sh/uv/) — 各腳本以 PEP 723 宣告依賴，`uv run` 會自動準備 Python 與套件（機器不需要預先安裝 Python；uv 未裝時各 skill 會自動以 brew 或官方指令安裝）
-- 初次使用先跑 `ark-setup` 設定帳戶清單（原生視窗精靈，機密不經終端機與對話）：
-  - **永豐 Shioaji**（最多一個）— 隱藏輸入視窗收憑證 → 測試登入 → 寫入 `~/.ark-toolkit/.env`（權限 600）
-  - **檔案帳戶**（任意個）— 任何券商匯出的 CSV/Excel 持股清單，無 API 也能對帳
-  - **空清單＝純 ARK 模式** — 不對帳，僅用分析功能
+- [uv](https://docs.astral.sh/uv/) — 各腳本以 PEP 723 宣告依賴，`uv run` 會自動準備
+  Python 與套件（機器不需要預先安裝 Python；uv 未裝時各 skill 會自動安裝）
 
 ## 快速開始
 
+初次使用兩步：`ark-setup` 設定帳戶 → `ark-start` 驗證（模擬單通過後自動接實際看單）。
+
 ```bash
 uv run plugins/ark-toolkit/skills/ark-setup/setup.py             # 帳戶清單設定（原生視窗精靈）
+uv run plugins/ark-toolkit/skills/ark-start/verify.py            # 模擬單驗證委託路徑（不碰真錢）
 uv run plugins/ark-toolkit/skills/ark-read/read.py               # 靜默看各帳戶持倉
-uv run plugins/ark-toolkit/skills/ark-collect/collect.py         # 多帳戶：收集確認寫快照
-uv run plugins/ark-toolkit/skills/ark-sync/sync.py --dry-run     # 看差異
+uv run plugins/ark-toolkit/skills/ark-sync/sync.py --dry-run     # 看 ARK 與真實持倉的差異
 uv run plugins/ark-toolkit/skills/ark-analyze/analyze.py         # 看風險
 uv run plugins/ark-toolkit/skills/ark-explore/run.py --show      # 看功能地圖快取
 ```
@@ -79,7 +85,8 @@ uv run plugins/ark-toolkit/skills/ark-explore/run.py --show      # 看功能地�
 cd plugins/ark-toolkit/lib                && uv run --no-project --python 3.13 --with openpyxl python -m unittest test_source
 cd plugins/ark-toolkit/skills/ark-sync    && PYTHONPATH=../../lib uv run --no-project --python 3.13 python -m unittest test_sync
 cd plugins/ark-toolkit/skills/ark-analyze && PYTHONPATH=../../lib uv run --no-project --python 3.13 python -m unittest test_analyze
-cd plugins/ark-toolkit/skills/ark-agent   && PYTHONPATH=../../lib uv run --no-project --python 3.13 python -m unittest test_market test_packet test_journal test_evaluate
+cd plugins/ark-toolkit/skills/ark-explore && PYTHONPATH=../../lib uv run --no-project --python 3.13 python -m unittest test_explore
+cd plugins/ark-toolkit/skills/ark-agent   && PYTHONPATH=../../lib uv run --no-project --python 3.13 python -m unittest test_market test_packet test_journal test_evaluate test_risk test_tracks test_equity test_execute test_daily test_phase0
 ```
 
 ## 通用性原則（給使用本 plugin 的 coding agent）
@@ -91,9 +98,6 @@ cd plugins/ark-toolkit/skills/ark-agent   && PYTHONPATH=../../lib uv run --no-pr
   或專案自己的 `docs/`，不要直接修改 plugin 原始碼。
 - **只有通用的修復與功能才改 plugin 本身**，並附測試；註解寫通用理由，不寫個人脈絡。
 - 判斷標準：**換一個使用者、換一個帳戶，這段內容還成立嗎？** 不成立就不屬於這裡。
-
-實例：切換下單環境改「已安裝的」launchd plist，repo 內保持 simulation 安全預設；
-軌道歸屬在 `~/.ark-toolkit/agent/tracks.json`；實驗協定在專案 `docs/`。
 
 ## 設計要點
 

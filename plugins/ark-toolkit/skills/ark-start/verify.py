@@ -5,7 +5,7 @@
 #     "shioaji",
 # ]
 # ///
-"""整合驗證：execute.py 的委託路徑在這台機器上真的能送出去。
+"""初次驗證（模擬單）：execute.py 的委託路徑在這台機器上真的能送出去。
 
 **只走 simulation**，硬編碼在程式裡，沒有切到正式環境的參數——這支腳本
 不該有辦法動到真錢。
@@ -14,13 +14,14 @@
 刻意用 1,500 股讓它同時產生整股腿（Common, 1 張）與零股腿（IntradayOdd,
 500 股），把兩種 order_lot 一次驗完；價格掛在跌停，不會成交，送完就撤。
 
-    uv run integration_execute_simulation.py
+    uv run skills/ark-start/verify.py
 """
 import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.abspath(os.path.join(HERE, "..", "..", "lib")))
+sys.path.insert(0, os.path.abspath(os.path.join(HERE, "..", "ark-agent")))  # execute.py 下單層
 
 import execute  # noqa: E402
 import source   # noqa: E402

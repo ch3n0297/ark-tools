@@ -3,6 +3,18 @@
 本檔記錄 ark-toolkit 的版本沿革。版本語意：主版號＝正式里程碑，
 次版號＝行為或語意變更，修訂號＝bug 修正。
 
+## [1.1.0] - 2026-08-11
+
+- **新增 ark-start skill（初次上手驗證軌）**：把「初次測試驗證（模擬單）」
+  與「實際串接看單」分成兩個明確步驟——模擬環境送單驗證委託路徑
+  （原 ark-agent 的 `integration_execute_simulation.py` 移為
+  `ark-start/verify.py`，寫死 simulation 碰不到真錢），通過後**自動串接**
+  ark-read 實際看帳上持倉，不需使用者再下指令
+- **文案通用化**：README 與 marketplace／plugin 描述改為
+  「券商 API（目前支援永豐 Shioaji，架構可擴充）＋CSV/Excel 檔案帳戶」
+  的表述，不再寫死單一券商
+- README 測試清單補齊：ark-agent 全部 10 個測試模組、補上 ark-explore
+
 ## [1.0.0] - 2026-08-11 正式版
 
 - **每日流程補全**：`daily.py decide` 盤前自動刷新布局自選（用 App 內建

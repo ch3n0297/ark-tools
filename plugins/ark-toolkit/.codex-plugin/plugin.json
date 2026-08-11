@@ -1,7 +1,7 @@
 {
   "name": "ark-toolkit",
-  "version": "1.0.0",
-  "description": "同步、分析並解說方舟運算(ARK) App 的台股庫存與功能，真實持倉支援永豐 Shioaji API＋券商 CSV/Excel 多帳戶合併。僅限 macOS。",
+  "version": "1.1.0",
+  "description": "同步、分析並解說方舟運算(ARK) App 的台股庫存與功能，真實持倉支援券商 API（目前支援永豐 Shioaji）＋券商 CSV/Excel 檔案帳戶，多帳戶合併。僅限 macOS。",
   "author": {
     "name": "hjcloog",
     "email": "hjcaieng@gmail.com"
@@ -10,12 +10,13 @@
   "interface": {
     "displayName": "ARK Toolkit",
     "shortDescription": "同步、分析並解說方舟運算的台股庫存與功能",
-    "longDescription": "方舟運算(ARK)沒有官方 API，本工具透過 macOS Accessibility API 操作其 UI：以永豐 Shioaji 帳戶的真實持倉為唯一真實來源同步庫存（修改／新增／刪除），分析集中度、與 App 建議部位的偏離、風控門檻檢查與歷史快照復盤，並附一份由實際探索產出的全 App 功能地圖，可直接回答「策略頁在幹嘛」「離職倒數怎麼用」這類問題。所有寫入前都以 App 自算的總成本交叉驗算，不符即中止。僅限 macOS。",
+    "longDescription": "方舟運算(ARK)沒有官方 API，本工具透過 macOS Accessibility API 操作其 UI：以帳戶清單的真實持倉為唯一真實來源同步庫存（修改／新增／刪除；帳戶支援券商 API＋CSV/Excel 檔案帳戶，API 目前支援永豐 Shioaji），分析集中度、與 App 建議部位的偏離、風控門檻檢查與歷史快照復盤，並附一份由實際探索產出的全 App 功能地圖，可直接回答「策略頁在幹嘛」「離職倒數怎麼用」這類問題。所有寫入前都以 App 自算的總成本交叉驗算，不符即中止。僅限 macOS。",
     "developerName": "hjcloog",
     "category": "Productivity",
     "capabilities": ["Interactive", "Read", "Write"],
     "defaultPrompt": [
       "執行 ark-setup 完成初始設定（選擇持倉來源並以原生視窗安全設定憑證）。",
+      "執行 ark-start 驗證環境：模擬單測試委託路徑，通過後自動看帳上持倉。",
       "用 ark-sync 檢查我的 ARK 庫存與真實持倉有沒有差異（先 dry-run）。",
       "用 ark-analyze 分析我目前的集中度與部位偏離。",
       "用 ark-analyze 存一份快照，並跟上次比較有什麼變化。",
