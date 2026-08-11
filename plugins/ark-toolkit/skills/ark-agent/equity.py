@@ -104,19 +104,24 @@ def main():
                               "last_price": float(p.last_price), "pnl": float(p.pnl)}
                      for p in rows}
         balance = float(api.account_balance().acc_balance)
+        # 未交割應收付必須計入現金：大額調節日的賣出款 T+2 才入帳，只看
+        # 已交割餘額會出現假回撤（2026-08-11 實測 −40%），把熔斷誤觸成 L2。
+        s = api.list_settlements(api.stock_account)
+        pending = float(s.t_money) + float(s.t1_money) + float(s.t2_money)
 
+    cash = balance + pending
     resolved = tracks.resolve(tracks.load(), positions,
                               risk.DEFAULTS["min_trade_value"])
     stock = sum(r["value"] for r in resolved.values())
     satellite = tracks.by_track(resolved)[tracks.SATELLITE]["value"]
-    point = make_point(date, stock, balance, satellite)
+    point = make_point(date, stock, cash, satellite)
     append_point(point)
 
     points = load_points()
     dd = drawdown(points)
     level = breaker_level(dd, risk.DEFAULTS["breaker_l1"], risk.DEFAULTS["breaker_l2"])
     print(f"✅ {date} 淨值 {point['total']:,.0f}"
-          f"（持股 {stock:,.0f}＋現金 {balance:,.0f}）")
+          f"（持股 {stock:,.0f}＋現金 {balance:,.0f}＋未交割 {pending:,.0f}）")
     print(f"   峰值 {peak(points):,.0f}｜回撤 {dd:.2%}｜熔斷 {level}"
           f"｜衛星軌 {satellite:,.0f}")
     return 0

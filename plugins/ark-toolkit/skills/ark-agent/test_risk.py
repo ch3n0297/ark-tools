@@ -240,19 +240,35 @@ class TestOrderCaps(unittest.TestCase):
         self.assertEqual(len(v), 1)
         self.assertIn("單筆", v[0])
 
+    def test_賣單不受單筆上限(self):
+        """2026-08-11 使用者指示：金額上限只管買進側。賣出是調節既有部位，
+        上界天然受持倉量與「獲利才調節」紀律約束。"""
+        v = self.caps([{"action": "sell", "code": "2330", "qty": 24}])    # 57,120
+        self.assertEqual(v, [])
+
+    def test_賣單不計入單日成交(self):
+        v = self.caps([{"action": "sell", "code": "2330", "qty": 42}])    # 99,960
+        self.assertEqual(v, [])
+
     def test_單日買進總額超限(self):
         v = self.caps([{"action": "buy", "code": "0050", "qty": 190},
                        {"action": "buy", "code": "2330", "qty": 10}])     # 19,000 + 23,800
         self.assertTrue(any("單日買進" in x for x in v))
 
     def test_單日成交總額超限(self):
-        v = self.caps([{"action": "sell", "code": "2330", "qty": 15},     # 35,700
-                       {"action": "sell", "code": "0050", "qty": 190},    # 19,000
-                       {"action": "buy", "code": "0050", "qty": 120}])    # 12,000
+        v = self.caps([{"action": "buy", "code": "0050", "qty": 190},     # 19,000 ×3
+                       {"action": "buy", "code": "0050", "qty": 190},
+                       {"action": "buy", "code": "0050", "qty": 190},
+                       {"action": "buy", "code": "2330", "qty": 8}])      # 19,040
         self.assertTrue(any("單日成交" in x for x in v))
 
     def test_低於最小可交易金額(self):
         v = self.caps([{"action": "buy", "code": "0050", "qty": 10}])     # 1,000
+        self.assertTrue(any("最小可交易" in x for x in v))
+
+    def test_賣單低於最小可交易金額仍報(self):
+        """最小可交易金額是成本佔比問題，與方向無關，賣單照查。"""
+        v = self.caps([{"action": "sell", "code": "0050", "qty": 10}])    # 1,000
         self.assertTrue(any("最小可交易" in x for x in v))
 
     def test_無報價時以限價中點估值(self):

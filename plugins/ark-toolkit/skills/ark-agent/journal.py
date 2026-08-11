@@ -243,13 +243,61 @@ def _slippage(price, order):
     return (price - mid) / mid
 
 
-def match_fills(orders, pl_rows, positions_before, positions_after):
+def external_legs(entries, date, own_lock):
+    """同日**計畫外**的成交腿：phase0，或非第一決策（amended）的送單。
+
+    對回把「該代號當日全部賣出」都算給決策單——同日若有計畫外執行，不先
+    扣掉就會把它的量與價都歸給決策（2026-08-11 實例：決策賣 2330 8 股、
+    phase0 又賣 24 股，會被記成決策成交 32 股）。本決策自己的 execution
+    以 decision_lock 識別，不論 backend 都不算計畫外。
+    """
+    return [leg for e in entries
+            if e.get("date") == date
+            and (e.get("type") == "phase0"
+                 or (e.get("type") == "execution"
+                     and e.get("decision_lock") != own_lock))
+            for leg in e.get("legs", []) if leg.get("ok")]
+
+
+def deduct_external_legs(pl_rows, legs):
+    """從損益列扣掉計畫外賣出，回傳剩餘列（歸屬決策單的部分）。
+
+    腿記的是委託價非成交價，不能按價格對列——按股數扣：先找股數恰好
+    相等的列整列對消（分筆送單的常態），沒有再依序扣量。
+    """
+    remaining = [dict(r) for r in pl_rows]
+    for leg in legs:
+        if leg.get("action") != "sell":
+            continue
+        need = leg["shares"]
+        exact = next((r for r in remaining
+                      if r["code"] == leg["code"] and r["quantity"] == need), None)
+        if exact is not None:
+            remaining.remove(exact)
+            continue
+        for r in remaining:
+            if need <= 0:
+                break
+            if r["code"] != leg["code"]:
+                continue
+            take = min(need, r["quantity"])
+            r["quantity"] -= take
+            need -= take
+        remaining = [r for r in remaining if r["quantity"] > 0]
+    return remaining
+
+
+def match_fills(orders, pl_rows, positions_before, positions_after,
+                external_buys=None):
     """把決策單對回實際成交，回傳 (fills, unfilled)。
 
-    賣出：list_profit_loss 的列直接給成交價（可能多筆，加權平均）。
-    買進：持倉 diff + 均價反推。
+    賣出：list_profit_loss 的列直接給成交價（可能多筆，加權平均）——
+    呼叫端應先以 deduct_external_legs 扣掉計畫外賣出。
+    買進：持倉 diff + 均價反推；external_buys（{code: 股數}）是同日
+    計畫外買進，從 diff 扣掉（均價反推會含它的價格，屬近似值）。
     """
     fills, unfilled = [], []
+    external_buys = external_buys or {}
     for o in orders:
         code = o["code"]
         if o["action"] == "sell":
@@ -266,7 +314,8 @@ def match_fills(orders, pl_rows, positions_before, positions_after):
         else:
             before = positions_before.get(code, {"qty": 0, "avg_price": 0.0})
             after = positions_after.get(code)
-            gained = (after["qty"] if after else 0) - before["qty"]
+            gained = ((after["qty"] if after else 0) - before["qty"]
+                      - external_buys.get(code, 0))
             if gained > 0:
                 price = infer_buy_price(before["qty"], before["avg_price"],
                                         after["qty"], after["avg_price"])
@@ -326,7 +375,14 @@ def settle_previous(api, today, path=JOURNAL, price_dir=None):
              for p in api.list_positions(api.stock_account, unit=sj.Unit.Share)}
     pk = packet_mod.load_packet(prev)
     before = (pk or {}).get("account", {}).get("positions", {})
-    fills, unfilled = match_fills(decision.get("orders", []), pl_rows, before, after)
+    ext = external_legs(entries, prev, decision.get("lock"))
+    ext_buys = {}
+    for leg in ext:
+        if leg.get("action") == "buy":
+            ext_buys[leg["code"]] = ext_buys.get(leg["code"], 0) + leg["shares"]
+    fills, unfilled = match_fills(decision.get("orders", []),
+                                  deduct_external_legs(pl_rows, ext),
+                                  before, after, external_buys=ext_buys)
     entry = {"type": "fill", "date": today, "ts": now, "decision_ref": prev,
              "fills": fills, "unfilled": unfilled}
     append_entry(entry, path)

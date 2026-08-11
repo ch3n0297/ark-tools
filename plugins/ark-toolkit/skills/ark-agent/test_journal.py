@@ -334,6 +334,74 @@ class TestMatchFills(unittest.TestCase):
                                (fills[0]["price"] - 1650.0) / 1650.0, places=6)
 
 
+class TestExternalLegs(unittest.TestCase):
+    """同日的計畫外執行（phase0／amended 決策的送單）不可歸給第一決策。
+
+    2026-08-11 實例：決策賣 2330 8 股、phase0 又賣 24 股——不扣的話對回
+    會記成決策成交 32 股，滑價與 evaluate 全被污染。"""
+
+    ENTRIES = [
+        {"type": "decision", "date": "2026-08-11", "lock": "L1"},
+        {"type": "execution", "date": "2026-08-11", "decision_lock": "L1",
+         "legs": [{"code": "2330", "action": "sell", "shares": 8,
+                   "price": 2385.0, "ok": True}]},
+        {"type": "phase0", "date": "2026-08-11",
+         "legs": [{"code": "2330", "action": "sell", "shares": 24,
+                   "price": 2395.0, "ok": True},
+                  {"code": "0052", "action": "sell", "shares": 7,
+                   "price": 60.8, "ok": True},
+                  {"code": "9999", "action": "sell", "shares": 5,
+                   "price": 10.0, "ok": False}]},
+    ]
+
+    def test_收集計畫外腿_排除本決策與失敗腿(self):
+        legs = journal.external_legs(self.ENTRIES, "2026-08-11", "L1")
+        self.assertEqual([(l["code"], l["shares"]) for l in legs],
+                         [("2330", 24), ("0052", 7)])
+
+    def test_amended決策的執行也算計畫外(self):
+        entries = self.ENTRIES + [
+            {"type": "execution", "date": "2026-08-11", "decision_lock": "L2",
+             "legs": [{"code": "0050", "action": "buy", "shares": 3,
+                       "price": 100.0, "ok": True}]}]
+        legs = journal.external_legs(entries, "2026-08-11", "L1")
+        self.assertIn(("0050", 3), [(l["code"], l["shares"]) for l in legs])
+
+    def test_扣除計畫外賣單_整列精確對消(self):
+        pl = [{"code": "2330", "quantity": 8, "price": 2390.0},
+              {"code": "2330", "quantity": 24, "price": 2395.0}]
+        legs = [{"code": "2330", "action": "sell", "shares": 24,
+                 "price": 2395.0, "ok": True}]
+        left = journal.deduct_external_legs(pl, legs)
+        self.assertEqual(left, [{"code": "2330", "quantity": 8, "price": 2390.0}])
+
+    def test_扣除計畫外賣單_無恰等列時依序扣量(self):
+        pl = [{"code": "2330", "quantity": 30, "price": 2390.0}]
+        legs = [{"code": "2330", "action": "sell", "shares": 24,
+                 "price": 2395.0, "ok": True}]
+        left = journal.deduct_external_legs(pl, legs)
+        self.assertEqual(left, [{"code": "2330", "quantity": 6, "price": 2390.0}])
+
+    def test_扣除後對回只剩決策量(self):
+        pl = [{"code": "2330", "quantity": 8, "price": 2390.0},
+              {"code": "2330", "quantity": 24, "price": 2395.0}]
+        legs = [{"code": "2330", "action": "sell", "shares": 24,
+                 "price": 2395.0, "ok": True}]
+        fills, _ = journal.match_fills(
+            [sell(code="2330", qty=8, low=2385.0, high=2405.0)],
+            journal.deduct_external_legs(pl, legs), {}, {})
+        self.assertEqual(fills[0]["qty"], 8)
+        self.assertAlmostEqual(fills[0]["price"], 2390.0)
+
+    def test_計畫外買單不污染買進對回(self):
+        before = {}
+        after = {"0050": {"qty": 10, "avg_price": 100.0}}
+        fills, _ = journal.match_fills(
+            [buy(code="0050", qty=4, low=99.0, high=101.0)],
+            [], before, after, external_buys={"0050": 6})
+        self.assertEqual(fills[0]["qty"], 4)
+
+
 class TestPreviousWeekday(unittest.TestCase):
     def test_跨週末(self):
         self.assertEqual(journal.previous_weekday("2026-08-10"), "2026-08-07")  # 一→五

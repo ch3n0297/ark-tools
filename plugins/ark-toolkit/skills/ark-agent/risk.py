@@ -177,25 +177,27 @@ def order_caps_violations(orders, quotes, limits):
     """金額上限檢查，回傳違規訊息清單（空 = 合規）。
 
     這是無人值守的爆炸半徑控制：即使判斷層或紀律驗證出錯，單日能動的錢
-    仍有硬上限。
+    仍有硬上限。**金額上限只管買進側**（2026-08-11 使用者指示）：賣出是
+    調節既有部位，上界天然受持倉量與「獲利才調節」紀律約束，設上限反而
+    會把 ARK 要求的調節卡成好幾天。最小可交易金額買賣皆查——那是
+    成本佔比問題，與方向無關。
     """
     out = []
-    buy_total = turnover = 0.0
+    buy_total = 0.0
     for o in orders:
         value = _est_value(o, quotes)
-        turnover += value
         if o["action"] == "buy":
             buy_total += value
-        if value > limits["per_order_cap"]:
-            out.append(f"{o['code']} 單筆 {value:,.0f} 超過上限 "
-                       f"{limits['per_order_cap']:,.0f}")
+            if value > limits["per_order_cap"]:
+                out.append(f"{o['code']} 單筆 {value:,.0f} 超過上限 "
+                           f"{limits['per_order_cap']:,.0f}")
         if value < limits["min_trade_value"]:
             out.append(f"{o['code']} 金額 {value:,.0f} 低於最小可交易金額 "
                        f"{limits['min_trade_value']:,.0f}（成本佔比過高）")
     if buy_total > limits["daily_buy_cap"]:
         out.append(f"單日買進 {buy_total:,.0f} 超過上限 {limits['daily_buy_cap']:,.0f}")
-    if turnover > limits["daily_turnover_cap"]:
-        out.append(f"單日成交 {turnover:,.0f} 超過上限 "
+    if buy_total > limits["daily_turnover_cap"]:
+        out.append(f"單日成交 {buy_total:,.0f} 超過上限 "
                    f"{limits['daily_turnover_cap']:,.0f}")
     return out
 
@@ -266,9 +268,12 @@ def build_envelope(packet, assigned, equity_points, satellite_exits, calendar,
         "blocks": blocks,
         "breaker": {"level": level, "drawdown": round(dd, 6),
                     "peak": equity.peak(equity_points)},
-        "limits": {k: config[k] for k in
-                   ("per_order_cap", "daily_buy_cap", "daily_turnover_cap",
-                    "min_trade_value")},
+        "limits": {**{k: config[k] for k in
+                      ("per_order_cap", "daily_buy_cap", "daily_turnover_cap",
+                       "min_trade_value")},
+                   # 決策層照 envelope 自律，語意必須寫在資料裡，不能只在程式碼註解
+                   "scope": "金額上限只適用買進側；賣出不設金額上限"
+                            "（min_trade_value 買賣皆查）"},
         "tracks": {
             tracks.CORE: agg[tracks.CORE],
             tracks.SATELLITE: {**agg[tracks.SATELLITE], "quota": quota,
