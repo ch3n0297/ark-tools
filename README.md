@@ -82,6 +82,19 @@ cd plugins/ark-toolkit/skills/ark-analyze && PYTHONPATH=../../lib uv run --no-pr
 cd plugins/ark-toolkit/skills/ark-agent   && PYTHONPATH=../../lib uv run --no-project --python 3.13 python -m unittest test_market test_packet test_journal test_evaluate
 ```
 
+## 通用性原則（給使用本 plugin 的 coding agent）
+
+本 plugin 會發佈給其他使用者，內容必須保持通用。給每個使用它的 coding agent 的建議：
+
+- **個人化內容不進 plugin** —— 帳戶設定、排程參數（如已安裝 plist 的環境變數）、
+  專案／實驗協定、一次性調整、私人筆記，一律放執行資料夾 `~/.ark-toolkit/`
+  或專案自己的 `docs/`，不要直接修改 plugin 原始碼。
+- **只有通用的修復與功能才改 plugin 本身**，並附測試；註解寫通用理由，不寫個人脈絡。
+- 判斷標準：**換一個使用者、換一個帳戶，這段內容還成立嗎？** 不成立就不屬於這裡。
+
+實例：切換下單環境改「已安裝的」launchd plist，repo 內保持 simulation 安全預設；
+軌道歸屬在 `~/.ark-toolkit/agent/tracks.json`；實驗協定在專案 `docs/`。
+
 ## 設計要點
 
 ARK 是 FairPlay 加密的 wrapped iOS App，沒有官方 API，全靠 Accessibility API 操作 UI。實作中有數個「失敗會偽裝成成功」的陷阱（`AXSetValue` 假成功、被遮擋元素的 `AXPress` 回傳 0 卻無效、解析失效被當成空庫存），各 skill 的 `SKILL.md` 有完整說明——修改程式碼前請先讀。

@@ -5,6 +5,11 @@ description: ark-toolkit 帳戶清單設定精靈：以 macOS 原生視窗管理
 
 # ark-setup
 
+> **通用性原則**：本 plugin 是通用工具，會發佈給其他使用者。個人化內容
+> （帳戶設定、排程參數、專案協定、一次性調整）放執行資料夾 `~/.ark-toolkit/`
+> 或專案自己的 `docs/`，**不要直接改 plugin**；只有通用的修復與功能
+> （附測試）才動 plugin 本身。
+
 帳戶清單設定精靈。決定 ark-read／ark-collect／ark-sync／ark-analyze 的
 「真實持倉」由哪些帳戶組成，並在需要時安全地收集 API 憑證。
 多帳戶時同檔股票會合併（股數相加、均價加權平均）。

@@ -5,6 +5,11 @@ description: 探索方舟運算(ARK) App 的全 App 結構，產出給 Agent 讀
 
 # ark-explore
 
+> **通用性原則**：本 plugin 是通用工具，會發佈給其他使用者。個人化內容
+> （帳戶設定、排程參數、專案協定、一次性調整）放執行資料夾 `~/.ark-toolkit/`
+> 或專案自己的 `docs/`，**不要直接改 plugin**；只有通用的修復與功能
+> （附測試）才動 plugin 本身。
+
 唯讀走訪 ARK 全 App，把每一頁的結構記下來，存成 JSON 快取
 （`~/.ark-toolkit/app-map/<版本號>.json`）。`references/ark-app-map.md`（功能地圖）與
 `references/ark-app-ux.svg`（UX 流程圖）是以探索結果為底、再由人工補上語意說明的成品——

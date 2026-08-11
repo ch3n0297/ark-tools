@@ -241,8 +241,8 @@ class TestOrderCaps(unittest.TestCase):
         self.assertIn("單筆", v[0])
 
     def test_賣單不受單筆上限(self):
-        """2026-08-11 使用者指示：金額上限只管買進側。賣出是調節既有部位，
-        上界天然受持倉量與「獲利才調節」紀律約束。"""
+        """金額上限只管買進側：賣出是調節既有部位，上界天然受持倉量與
+        「獲利才調節」紀律約束，設上限會把 ARK 要求的調節卡成好幾天。"""
         v = self.caps([{"action": "sell", "code": "2330", "qty": 24}])    # 57,120
         self.assertEqual(v, [])
 
