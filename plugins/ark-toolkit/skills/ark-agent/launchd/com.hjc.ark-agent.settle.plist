@@ -27,10 +27,8 @@
     <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>14</integer><key>Minute</key><integer>30</integer></dict>
   </array>
 
-  <!-- 結算與 decide 相反：錯過了**應該**補跑。成交對回、淨值記錄、庫存同步
-       都是對既成事實的記錄，晚幾小時做結果一樣，漏做卻會讓熔斷基準斷掉。 -->
-  <key>StartCalendarIntervalRunAtLoad</key>
-  <true/>
+  <!-- 結算的時間窗比 decide 寬（±240 分）：那是對既成事實的記錄，晚幾小時
+       做結果一樣，漏做卻會讓熔斷基準斷掉。窗寬定義在 daily.py 的 WINDOWS。 -->
 
   <key>WorkingDirectory</key>
   <string>/Users/hjc/Documents/Stock</string>
@@ -43,6 +41,9 @@
     <string>/Users/hjc</string>
     <key>ARK_BACKEND</key>
     <string>simulation</string>
+    <!-- 決策模型：無人值守要動真錢，判斷品質是最不該省的地方 -->
+    <key>ARK_DECISION_MODEL</key>
+    <string>fable</string>
   </dict>
 
   <key>StandardOutPath</key>

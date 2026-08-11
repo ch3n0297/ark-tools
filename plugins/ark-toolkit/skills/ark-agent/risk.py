@@ -31,7 +31,10 @@ ENVELOPE_DIR = os.path.expanduser("~/.ark-toolkit/agent/envelopes")
 REDUCE, BUY, HOLD = "reduce", "buy", "hold"
 
 DEFAULTS = {
-    "min_trade_value": 3000.0,        # 低消 20 元時 ≈ 0.67% 成本；低消確認後再定案
+    # 實測本帳戶（2026-08 對帳）：200–500 元的交易總費用僅 1–2.5 元，**沒有
+    # 20 元低消**。1,000 元的成本率約 0.3–0.4%，與大額交易相當；再低下去
+    # 手續費的每筆底價會開始吃掉報酬，而且部位小到不影響組合、只會產生雜訊。
+    "min_trade_value": 1000.0,
     "per_order_cap": 20000.0,
     "daily_buy_cap": 40000.0,
     "daily_turnover_cap": 60000.0,

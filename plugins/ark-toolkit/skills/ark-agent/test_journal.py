@@ -201,6 +201,44 @@ class TestTrackRouting(unittest.TestCase):
                           PACKET)
         self.assertTrue(any("參考調節" in x for x in v))
 
+    def test_主軌不得買槓桿或反向ETF(self):
+        """主軌不停損，標的必須會均值回歸。槓桿／反向 ETF 有波動耗損，盤整市
+        會慢性失血且不保證回得來——沒有出場機制的軌道抱它是最糟的組合。
+        它們在 ARK 的價值區裡是合法候選，所以得在這裡擋。"""
+        pk = {**LOSS_PACKET,
+              "discipline": {**LOSS_PACKET["discipline"],
+                             "buy_candidates": ["00631L", "00632R", "0050"]},
+              "news_scope": {"codes": LOSS_PACKET["news_scope"]["codes"]
+                             + ["00631L", "00632R", "0050"]},
+              "market": {"quotes": {**LOSS_PACKET["market"]["quotes"],
+                                    "00631L": {"close": 34.7},
+                                    "00632R": {"close": 10.0},
+                                    "0050": {"close": 104.25}}}}
+        for code in ("00631L", "00632R"):
+            v = self.validate([buy(code=code, qty=100, low=30.0, high=40.0)], pk)
+            self.assertTrue(any("槓桿" in x or "反向" in x for x in v), code)
+
+    def test_主軌可買一般ETF(self):
+        pk = {**LOSS_PACKET,
+              "discipline": {**LOSS_PACKET["discipline"], "buy_candidates": ["0050"]},
+              "news_scope": {"codes": LOSS_PACKET["news_scope"]["codes"] + ["0050"]},
+              "market": {"quotes": {**LOSS_PACKET["market"]["quotes"],
+                                    "0050": {"close": 104.25}}}}
+        self.assertEqual(self.validate([buy(code="0050", qty=100,
+                                            low=103.0, high=105.0)], pk), [])
+
+    def test_衛星軌可買槓桿ETF(self):
+        """衛星軌有 −12% 停損，槓桿的波動耗損有出場機制擋著，可以放行"""
+        over = {**ENVELOPE, "tracks": {**ENVELOPE["tracks"],
+                "satellite": {**ENVELOPE["tracks"]["satellite"],
+                              "allowlist": ["2330", "00631L"], "remaining": 50000.0}}}
+        pk = {**LOSS_PACKET,
+              "market": {"quotes": {**LOSS_PACKET["market"]["quotes"],
+                                    "00631L": {"close": 34.7}}}}
+        v = self.validate([sat(buy(code="00631L", qty=100, low=34.0, high=35.0))],
+                          pk, envelope=over)
+        self.assertEqual(v, [])
+
     def test_未標軌道者視為主軌(self):
         self.assertEqual(journal.validate_orders([sell()], PACKET, ENVELOPE), [])
 

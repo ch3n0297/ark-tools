@@ -46,29 +46,40 @@ def shares_to_reduce(qty, price, quota):
     return max(0, qty - keep)
 
 
-def build_plan(positions, assigned, quota):
-    """要送出的委託。只碰衛星軌的超額部位。
+def _order(code, qty, price, track, reason):
+    """先對齊價格檔位，計畫印出來的就是真的會送出的價格。"""
+    etf = execute.is_etf(code)
+    return {"action": "sell", "code": code, "qty": qty, "track": track,
+            "limit_low": execute.round_to_tick(price * (1 - LIMIT_BAND), etf, "sell"),
+            "limit_high": execute.round_to_tick(price * (1 + LIMIT_BAND), etf, "buy"),
+            "reason": reason}
 
-    繼承軌（虧損中、ARK 紀律不可賣）與主軌一律不動——開局整理豁免的只有
+
+def build_plan(positions, assigned, quota, keep=()):
+    """要送出的委託。兩件事：
+
+    1. **衛星軌降回配額內**——只減到門檻，不是清倉。那是刻意保留的部位。
+    2. **主軌清空**——接手的組合有一堆幾百元的零碎部位，小到不影響組合，
+       卻會佔滿主軌檔數（上限只有 1 檔）而讓系統永遠買不了東西。實測手續費
+       只要 1–2.5 元，清掉的代價可以忽略，之後照 ARK 的布局訊號重建。
+
+    繼承軌（虧損中）一股不賣，虧損的主軌部位也不賣——開局整理豁免的只有
     金額上限，不豁免紀律。
     """
     plan = []
     for code, p in sorted(positions.items()):
-        if assigned.get(code) != tracks.SATELLITE:
-            continue
+        if code in keep:
+            continue                      # 已經是主軌想要的標的，留著當起點
         price = p["last_price"]
-        qty = shares_to_reduce(p["qty"], price, quota)
-        if not qty:
-            continue
-        # 先對齊價格檔位，計畫印出來的就是真的會送出的價格
-        etf = execute.is_etf(code)
-        plan.append({"action": "sell", "code": code, "qty": qty,
-                     "track": tracks.SATELLITE,
-                     "limit_low": execute.round_to_tick(price * (1 - LIMIT_BAND),
-                                                        etf, "sell"),
-                     "limit_high": execute.round_to_tick(price * (1 + LIMIT_BAND),
-                                                         etf, "buy"),
-                     "reason": f"開局整理：衛星軌降回配額 {quota:,.0f} 內"})
+        track = assigned.get(code, tracks.CORE)
+        if track == tracks.SATELLITE:
+            qty = shares_to_reduce(p["qty"], price, quota)
+            if qty:
+                plan.append(_order(code, qty, price, track,
+                                   f"開局整理：衛星軌降回配額 {quota:,.0f} 內"))
+        elif track == tracks.CORE and p["pnl"] > 0:
+            plan.append(_order(code, p["qty"], price, track,
+                               "開局整理：主軌歸零，之後照 ARK 布局訊號重建"))
     return plan
 
 
@@ -76,6 +87,8 @@ def main():
     ap = argparse.ArgumentParser(description="開局整理（一次性，預設只印計畫）")
     ap.add_argument("--execute", action="store_true",
                     help="真的送出委託（正式環境，動真錢）")
+    ap.add_argument("--keep", default="", metavar="代號,代號",
+                    help="主軌歸零時保留這些標的（已經是想要的部位，不必賣了再買回）")
     args = ap.parse_args()
 
     import market
@@ -98,7 +111,8 @@ def main():
     for t in tracks.ALL:
         print(f"  {t:<10} {agg[t]['value']:>10,.0f}  {agg[t]['codes']}")
 
-    plan = build_plan(positions, assigned, quota)
+    keep = {c.strip() for c in args.keep.split(',') if c.strip()}
+    plan = build_plan(positions, assigned, quota, keep)
     if not plan:
         print("\n✅ 無需整理：衛星軌已在配額內")
         return 0

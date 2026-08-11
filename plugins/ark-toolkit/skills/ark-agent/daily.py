@@ -39,7 +39,13 @@ LOG = os.path.join(STATE, "daily.log")
 SYNC = os.path.abspath(os.path.join(HERE, "..", "ark-sync", "sync.py"))
 
 PROCEED, SKIP, FAIL = "proceed", "skip", "fail"
-PLACEHOLDERS = ("PACKET_PATH", "ENVELOPE_PATH", "DECISION_PATH", "TODAY")
+
+# (排定時刻, 容許分鐘)。decide 窗窄——盤中判斷過了時間就失效；settle 窗寬——
+# 那是對既成事實的記錄，晚幾小時做結果一樣。
+WINDOWS = {"decide": ("10:00", 60), "settle": ("14:30", 240)}
+
+# 決策模型。無人值守下要動真錢，判斷品質是最不該省的地方。
+DECISION_MODEL = os.environ.get("ARK_DECISION_MODEL", "fable")
 
 
 # ---------------------------------------------------------------- 純邏輯
@@ -48,6 +54,19 @@ def is_trading_weekday(date):
     """週末不跑。國定假日不在這裡擋——settle 以 0050 當日有無行情判定休市，
     比維護一份會過期的假日表可靠。"""
     return dt.date.fromisoformat(date).weekday() < 5
+
+
+def is_within_window(now, scheduled, tolerance_minutes):
+    """現在時間是否落在排定時段的容許範圍內（"HH:MM" 格式，含端點）。
+
+    launchd 對錯過的 StartCalendarInterval 會在系統喚醒後補跑一次——機器若在
+    10:00 睡著，13:00 醒來就會執行，而那時盤中價格早已不同、限價全部失效。
+    時間窗必須由程式自己守，不能寄望排程器的語意。
+    """
+    def minutes(hhmm):
+        h, m = hhmm.split(":")
+        return int(h) * 60 + int(m)
+    return abs(minutes(now) - minutes(scheduled)) <= tolerance_minutes
 
 
 def classify_risk_exit(code):
@@ -85,6 +104,20 @@ def settle_failures(results):
 
 # ---------------------------------------------------------------- 副作用
 
+def in_window(mode):
+    """現在是否還在該模式的執行時窗內。逾時就放棄——補跑一個過期的決策
+    比不跑危險得多。`ARK_FORCE_WINDOW=1` 可略過（供手動測試）。"""
+    if os.environ.get("ARK_FORCE_WINDOW"):
+        return True
+    scheduled, tolerance = WINDOWS[mode]
+    now = dt.datetime.now().strftime("%H:%M")
+    if is_within_window(now, scheduled, tolerance):
+        return True
+    notify(mode, f"已逾時不執行：現在 {now}，排定 {scheduled}"
+                 f"（容許 ±{tolerance} 分）")
+    return False
+
+
 def log(mode, message):
     os.makedirs(STATE, exist_ok=True)
     stamp = dt.datetime.now().replace(microsecond=0).isoformat(" ")
@@ -121,6 +154,8 @@ def decide(date, backend):
     if not is_trading_weekday(date):
         log(mode, "週末，不執行")
         return 0
+    if not in_window(mode):
+        return 0
     if run(mode, os.path.join(HERE, "packet.py")) != 0:
         notify(mode, "🛑 決策包產生失敗")
         return 1
@@ -145,10 +180,11 @@ def decide(date, backend):
         prompt = render_prompt(fh.read(), packet, envelope, decision, date)
 
     # LLM 插槽：只給讀檔／寫檔／查新聞，**不給 Bash**——它無法自行送單或改紀錄
-    log(mode, "呼叫 claude 產生決策…")
+    log(mode, f"呼叫 claude（{DECISION_MODEL}）產生決策…")
     with open(LOG, "a", encoding="utf-8") as fh:
         rc = subprocess.run(
             ["claude", "-p", prompt,
+             "--model", DECISION_MODEL,
              "--allowedTools", "Read", "Write", "WebSearch", "WebFetch",
              "--permission-mode", "acceptEdits",
              "--output-format", "text"],
@@ -175,6 +211,8 @@ def settle(date):
     mode = "settle"
     if not is_trading_weekday(date):
         log(mode, "週末，不執行")
+        return 0
+    if not in_window(mode):
         return 0
     results = [
         ("成交對回", run(mode, os.path.join(HERE, "journal.py"), "settle")),

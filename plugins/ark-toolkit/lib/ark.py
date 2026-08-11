@@ -12,8 +12,12 @@ from typing import NamedTuple, Optional
 
 SYNC_LOG = os.path.expanduser("~/.ark-toolkit/sync-log.jsonl")
 
-LAYOUT_ROW_H = 70     # 布局自選頁每列高度
-LAYOUT_SPLIT = 28     # 同一列內上下兩排的分界（相對列頂）
+# 布局自選頁的版面幾何。**v1.7.4 之後變過**：列高 70→54、上下兩排相對列頂的
+# 偏移 15/36→11/27。舊值會讓下排落進上排、又把下一列的上排吃進本列下排，
+# 欄位整排錯位 → 一致性檢查失敗 → 整頁讀成 0 檔。那是靜默失敗：系統會誤判
+# 「沒有買進候選」而永遠不買，卻不報任何錯。改版時先量座標再改這兩個數。
+LAYOUT_ROW_H = 54     # 布局自選頁每列高度
+LAYOUT_SPLIT = 20     # 同一列內上下兩排的分界（相對列頂）
 TAIL_FIELDS = 7       # 調節庫存頁尾端固定欄位數（見 parse_holding）
 KIND_TAILS = ("股", "資", "券")   # 「現股／融資／融券」在 desc 中被換行拆成兩半
 PRICE_TOL = 0.005     # 均價比對容差（sync 與 analyze 共用）
@@ -468,10 +472,17 @@ def watchlist_tabs(ax, w):
     return [(name, sel, el) for _x, name, sel, el in sorted(found, key=lambda t: t[0])]
 
 
-def layout_elements(ax, w, tab_top):
+NAME_COLUMN_TOL = 2   # 名稱列與視窗左緣的容許誤差（點）
+
+
+def layout_elements(ax, w, tab_top, left=0):
     """回傳 (名稱列, 數值儲存格)。
 
-    名稱列是靠左的 AXStaticText，數值是各自獨立的 AXButton。
+    名稱列是靠齊**視窗左緣**的 AXStaticText，數值是各自獨立的 AXButton。
+    `left` 必須是視窗的 x —— 早期版本寫死比對絕對座標 0，只有在 ARK 視窗
+    剛好貼齊螢幕左邊時才成立；視窗一被移動就一列都認不出來，而且不報錯，
+    整頁靜默讀成 0 檔，系統會誤判「沒有買進候選」而永遠不買。
+
     `tab_top` 之下是底部 tab —— 不濾掉的話「策略／自選／運算…」會被當成
     最後一列的儲存格，整排欄位錯位。
     """
@@ -482,7 +493,7 @@ def layout_elements(ax, w, tab_top):
         if not text or point is None or point[1] >= tab_top:
             continue
         role = ax.attr(el, "AXRole")
-        if role == "AXStaticText" and point[0] == 0:
+        if role == "AXStaticText" and abs(point[0] - left) <= NAME_COLUMN_TOL:
             names.append((point[1], text))
         elif role == "AXButton":
             cells.append((point[0], point[1], text))
@@ -520,7 +531,7 @@ def read_layout(ax, pid, watchlist=None):
     found, rejected = {}, []
 
     def collect():
-        names, cells = layout_elements(ax, ax.window(pid), tab_top)
+        names, cells = layout_elements(ax, ax.window(pid), tab_top, pos[0])
         for row_top, desc in names:
             upper, lower = split_layout_cells(cells, row_top)
             row = parse_layout(desc, upper, lower)
@@ -532,7 +543,7 @@ def read_layout(ax, pid, watchlist=None):
                 rejected.append(desc)
 
     def probe():
-        names, _cells = layout_elements(ax, ax.window(pid), tab_top)
+        names, _cells = layout_elements(ax, ax.window(pid), tab_top, pos[0])
         return tuple(sorted(d for _y, d in names))
 
     scroll_until_stable(ax, cx, cy, 300, probe)             # 先確實捲到頂

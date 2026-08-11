@@ -86,6 +86,16 @@ def track_of(order):
     return order.get("track", CORE)
 
 
+def is_leveraged_or_inverse(code):
+    """台股槓桿（正2，代號結尾 L）與反向（反1，結尾 R）ETF。
+
+    主軌不停損，標的必須會均值回歸；這類產品有波動耗損，盤整市慢性失血
+    且不保證回得來，沒有出場機制的軌道抱它是最糟的組合。它們在 ARK 的
+    價值區裡是合法候選，所以得在紀律層擋。
+    """
+    return code[:2] == "00" and code[-1:] in ("L", "R")
+
+
 def _validate_satellite(sat, envelope, quotes):
     """衛星軌自己的規則：白名單、配額、冷卻。
 
@@ -143,6 +153,9 @@ def validate_orders(orders, packet, envelope=None):
             violations.append(f"賣出 {o['code']} 違反紀律：不在可調節清單（虧損中或非持股）")
         if o["action"] == "buy" and o["code"] not in disc["buy_candidates"]:
             violations.append(f"買進 {o['code']} 違反紀律：不在價值區候選清單")
+        if o["action"] == "buy" and is_leveraged_or_inverse(o["code"]):
+            violations.append(f"買進 {o['code']} 違反主軌設定：槓桿／反向 ETF "
+                              f"有波動耗損，不可放進沒有停損的主軌（衛星軌才行）")
     if sat:
         violations += _validate_satellite(sat, envelope, quotes)
 

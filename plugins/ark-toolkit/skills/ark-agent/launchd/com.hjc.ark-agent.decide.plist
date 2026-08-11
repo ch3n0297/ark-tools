@@ -28,10 +28,8 @@
     <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
   </array>
 
-  <!-- 機器睡著而錯過時段時，不要醒來後補跑：10:00 的決策在 13:00 執行是另一回事，
-       盤中價格早已不同。寧可缺一天（settle 會記 missed），也不要用過期的判斷下單。 -->
-  <key>StartCalendarIntervalRunAtLoad</key>
-  <false/>
+  <!-- launchd 對錯過的排程會在喚醒後補跑一次，這裡擋不掉——時間窗改由
+       daily.py 的 in_window() 守：decide ±60 分、settle ±240 分，逾時直接放棄。 -->
 
   <key>WorkingDirectory</key>
   <string>/Users/hjc/Documents/Stock</string>
@@ -45,6 +43,9 @@
     <!-- 切實單改成 live。預設 simulation：不會因為忘記設定就動到真錢。 -->
     <key>ARK_BACKEND</key>
     <string>simulation</string>
+    <!-- 決策模型：無人值守要動真錢，判斷品質是最不該省的地方 -->
+    <key>ARK_DECISION_MODEL</key>
+    <string>fable</string>
   </dict>
 
   <key>StandardOutPath</key>

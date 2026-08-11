@@ -37,10 +37,98 @@ LAYOUT_TWO_TIERS = ("富邦摩台, 0057, 價值, 升溫", 820.0, [
 ])
 
 
+# 取自 2026-08-10 實機的真實座標。**版面在 v1.7.4 之後變過**：列高 70→54、
+# 上下兩排相對列頂的偏移 15/36→11/27。舊常數會讓下排落進上排、又把下一列的
+# 上排吃進本列下排，欄位整排錯位 → 一致性檢查失敗 → 整頁讀成 0 檔。
+# 這是靜默失敗：系統會誤判「沒有買進候選」而永遠不買，卻不報任何錯。
+LAYOUT_ROW_V2 = ("國泰費城半導體, 00830, 價值", 447.0, [
+    (161.0, 459.0, "88.45"), (257.0, 458.0, "88.24"),
+    (348.0, 458.0, "3"), (407.0, 458.0, "266"),
+    (117.0, 475.0, "▲2.1(2.43%)"), (236.0, 474.0, "0.24%"),
+    (297.0, 474.0, "267"), (363.0, 474.0, "23,647"),
+])
+# 下一列（富邦科技 0052）列頂 500，上排在 512–513
+LAYOUT_V2_NEXT_ROW_CELLS = [(162.0, 513.0, "60.95"), (257.0, 512.0, "60.93"),
+                            (348.0, 512.0, "4"), (407.0, 512.0, "244")]
+
+
 def parse_layout_row(sample):
     desc, top, cells = sample
     upper, lower = ark.split_layout_cells(cells, top)
     return ark.parse_layout(desc, upper, lower)
+
+
+class FakeEl:
+    def __init__(self, role, desc, x, y):
+        self.role, self.desc, self.x, self.y = role, desc, x, y
+
+
+class FakeAX:
+    """layout_elements 只用到 find / attr / point 三個介面。"""
+
+    def __init__(self, elements):
+        self.elements = elements
+
+    def find(self, root, pred):
+        return [e for e in self.elements if pred(e)]
+
+    def attr(self, el, name):
+        return {"AXDescription": el.desc, "AXRole": el.role}.get(name)
+
+    def point(self, el):
+        return (el.x, el.y)
+
+
+class TestLayoutElementsWindowOffset(unittest.TestCase):
+    """名稱列靠齊**視窗**左緣，不是螢幕左緣。用絕對座標 0 判斷的話，
+    視窗一被移動就一列都認不出來——而且不報錯，整頁靜默讀成 0 檔。"""
+
+    def elements(self, left):
+        return [FakeEl("AXStaticText", "國泰費城半導體, 00830, 價值", left, 447.0),
+                FakeEl("AXButton", "88.45", left + 133, 459.0),
+                FakeEl("AXButton", "88.24", left + 229, 458.0)]
+
+    def test_視窗在螢幕左緣時可讀(self):
+        names, cells = ark.layout_elements(FakeAX(self.elements(0)), None, 900, left=0)
+        self.assertEqual([d for _y, d in names], ["國泰費城半導體, 00830, 價值"])
+        self.assertEqual(len(cells), 2)
+
+    def test_視窗被移開後仍可讀(self):
+        names, cells = ark.layout_elements(FakeAX(self.elements(28)), None, 900, left=28)
+        self.assertEqual([d for _y, d in names], ["國泰費城半導體, 00830, 價值"])
+        self.assertEqual(len(cells), 2)
+
+    def test_非靠左的靜態文字不算名稱列(self):
+        els = self.elements(28) + [FakeEl("AXStaticText", "成本 163,970", 128, 437.0)]
+        names, _ = ark.layout_elements(FakeAX(els), None, 900, left=28)
+        self.assertEqual(len(names), 1)
+
+    def test_底部分頁之下的元素被濾掉(self):
+        els = self.elements(28) + [FakeEl("AXButton", "策略", 30, 950.0)]
+        _, cells = ark.layout_elements(FakeAX(els), None, 900, left=28)
+        self.assertNotIn("策略", [t for _x, _y, t in cells])
+
+
+class TestLayoutGeometryCurrentVersion(unittest.TestCase):
+    def test_目前版面的上下排分排正確(self):
+        upper, lower = ark.split_layout_cells(LAYOUT_ROW_V2[2], LAYOUT_ROW_V2[1])
+        self.assertEqual(upper, ["88.45", "88.24", "3", "266"])
+        self.assertEqual(lower, ["▲2.1(2.43%)", "0.24%", "267", "23,647"])
+
+    def test_目前版面不吃到下一列(self):
+        cells = LAYOUT_ROW_V2[2] + LAYOUT_V2_NEXT_ROW_CELLS
+        upper, lower = ark.split_layout_cells(cells, LAYOUT_ROW_V2[1])
+        for v in ("60.95", "60.93", "244"):
+            self.assertNotIn(v, upper + lower, v)
+
+    def test_目前版面能完整解析成列(self):
+        row = parse_layout_row(LAYOUT_ROW_V2)
+        self.assertEqual(row.code, "00830")
+        self.assertEqual(row.tiers, ("價值",))
+        self.assertEqual((row.price, row.nav), (88.45, 88.24))
+        self.assertEqual((row.tier_qty, row.tier_amount), (3, 266.0))
+        self.assertEqual((row.risk_qty, row.risk_amount), (267, 23647.0))
+        self.assertTrue(ark.layout_is_consistent(row))
 
 
 class TestParseLayout(unittest.TestCase):

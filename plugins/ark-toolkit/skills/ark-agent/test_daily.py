@@ -15,6 +15,32 @@ class TestIsTradingWeekday(unittest.TestCase):
         self.assertFalse(daily.is_trading_weekday("2026-08-16"))   # 日
 
 
+class TestDecisionWindow(unittest.TestCase):
+    """launchd 對錯過的 StartCalendarInterval 會在喚醒後補跑一次。10:00 的判斷
+    在 13:00 執行是另一回事——盤中價格早已不同，限價也全部失效。時間窗必須由
+    程式自己守，不能寄望排程器的語意。"""
+
+    def test_排定時間附近放行(self):
+        for t in ("09:55", "10:00", "10:20", "10:45"):
+            self.assertTrue(daily.is_within_window(t, "10:00", 60), t)
+
+    def test_超出容許範圍拒絕(self):
+        for t in ("08:30", "11:05", "13:20", "23:00"):
+            self.assertFalse(daily.is_within_window(t, "10:00", 60), t)
+
+    def test_排定時間之前也擋(self):
+        """機器提早喚醒時，09:00 就跑會拿到還沒重算過的 ARK 指標"""
+        self.assertFalse(daily.is_within_window("08:59", "10:00", 60))
+
+    def test_邊界含端點(self):
+        self.assertTrue(daily.is_within_window("09:00", "10:00", 60))
+        self.assertTrue(daily.is_within_window("11:00", "10:00", 60))
+
+    def test_結算窗較寬鬆(self):
+        """結算是對既成事實的記錄，晚幾小時做結果一樣，窗開大一點無妨"""
+        self.assertTrue(daily.is_within_window("17:00", "14:30", 240))
+
+
 class TestRiskExitCode(unittest.TestCase):
     """risk.py 用離開碼區分「今天不該交易」（3）與「產不出邊界」（2）。
     編排把兩者混為一談的話，全面熔斷會被誤報成系統故障。"""
