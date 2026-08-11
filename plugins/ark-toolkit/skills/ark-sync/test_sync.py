@@ -440,6 +440,24 @@ class FakeAx:
         return 99
 
 
+class TestStrategyRowParsing(unittest.TestCase):
+    def test_解析列代號(self):
+        self.assertEqual(ark.parse_strategy_row_code("兆豐洲際半導體, 00911, 全球, 4"),
+                         "00911")
+        self.assertEqual(ark.parse_strategy_row_code("元大台灣50正2, 00631L, 台灣, 10"),
+                         "00631L")
+
+    def test_非列格式回None(self):
+        for t in ("股票名稱", "54.6", "▼0.6(-1.09%)", "", None):
+            self.assertIsNone(ark.parse_strategy_row_code(t))
+
+    def test_解析檔數文字(self):
+        self.assertEqual(ark.parse_count("共選入9檔", "共選入"), 9)
+        self.assertEqual(ark.parse_count("❮取代❯完成後共 9 檔", "完成後共"), 9)
+        self.assertIsNone(ark.parse_count("❮取代❯完成後共 - 檔", "完成後共"))
+        self.assertIsNone(ark.parse_count("共選入9檔", "完成後共"))   # marker 不符
+
+
 class TestMonthTotal(unittest.TestCase):
     def test_取第一個純金額文字(self):
         texts = ["總計當月已實現報酬", "4,174 元", "日期", "報酬金額",

@@ -227,9 +227,33 @@ def main():
     import shioaji as sj
 
     pid = ark.ensure_responsive(ax, ax.activate())   # 殭屍態在這裡自癒，不留到讀取中途
+
+    # 佈局的眼睛：先把策略頁分區的當日標的「取代」進布局自選，買進候選才是
+    # 今天的價值區而非建清單那天的快照。刷新失敗沿用舊清單（位階欄仍會擋掉
+    # 過時標的，只是看不到新進場者），不值得為此放棄整天交易。
+    strategy_tab = os.environ.get("ARK_STRATEGY_TAB", "ETF價值區")
+    print(f"刷新布局自選（策略 › {strategy_tab}）…", flush=True)
+    layout_list = ark.current_layout_list(ax, pid)
+    refreshed = (ark.replace_watchlist_from_strategy(ax, pid, strategy_tab, layout_list)
+                 if layout_list else None)
+    if refreshed is None:
+        print("  ⚠️ 刷新失敗，沿用既有清單", flush=True)
+    else:
+        print(f"  {len(refreshed)} 檔", flush=True)
+
     print("讀取 ARK…", flush=True)
     holdings, declared, posture = read_ark(ax, pid)
     print(f"  {len(holdings)} 檔", flush=True)
+
+    # 買進側的錨：黃鈕為「建議布局」時先跑位階運算機，布局自選的
+    # 位階股數／風控股數才是今日值——那是 App 給的每檔買進建議，
+    # 決策層應以它為錨（與賣出側的 suggest_qty 對稱）。
+    if posture is not None:
+        budget = max(0.0, posture.suggested_value - posture.stock_value)
+        names = compute_max_names(posture.stock_value, posture.cash)
+        if budget > 0 and ark.run_tier_calculator(ax, pid, budget, names):
+            print(f"  位階運算完成（閒錢 {budget:,.0f}／{names} 檔）", flush=True)
+
     print("讀取布局自選…", flush=True)
     layout = ark.read_layout(ax, pid)
     print(f"  「{layout.watchlist}」{len(layout.rows)} 檔", flush=True)

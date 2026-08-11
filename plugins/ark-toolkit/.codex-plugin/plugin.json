@@ -1,6 +1,6 @@
 {
   "name": "ark-toolkit",
-  "version": "0.8.0",
+  "version": "1.0.0",
   "description": "同步、分析並解說方舟運算(ARK) App 的台股庫存與功能，真實持倉支援永豐 Shioaji API＋券商 CSV/Excel 多帳戶合併。僅限 macOS。",
   "author": {
     "name": "hjcloog",

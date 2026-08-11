@@ -321,6 +321,8 @@ def press_verified(ax, pid, el, pred, what, timeout=6.0):
         return wait_for(ax, pid, pred, what, timeout=timeout)
     except RuntimeError:
         p, s = ax.point(el), ax.size(el)
+        if p is None or s is None:
+            raise                      # 元素已失效（頁面早已切走），座標救不了
         ax.click(p[0] + s[0] / 2, p[1] + s[1] / 2)
         return wait_for(ax, pid, pred, what, timeout=timeout)
 
@@ -821,8 +823,13 @@ def read_posture(ax, pid):
         return None
     stock = num(fields[0]) if fields else (max(amounts) if amounts else 0.0)
     cash = num(fields[2]) if len(fields) > 2 else 0.0
-    suggested_ratio = min(ratios)
     total = stock + cash                       # 建議持股 = 總資金 × 建議比例
+    # 頁面有兩個純百分比文字：實際持股比例（＝持股/總資金）與建議比例。
+    # min() 只在調節態（實際>建議）碰巧正確；布局態（實際<建議）會挑到
+    # 實際比例，建議布局金額被算成 0。改為排除與實際吻合者，剩下的是建議。
+    actual = stock / total * 100.0 if total else 0.0
+    others = [r for r in ratios if abs(r - actual) > 0.5]
+    suggested_ratio = others[0] if others else min(ratios)
     suggested_value = total * suggested_ratio / 100.0
     return Posture(
         suggested_ratio=suggested_ratio,
@@ -832,6 +839,256 @@ def read_posture(ax, pid):
         suggested_cash=total - suggested_value,
         adjust_amount=adjust,
     )
+
+
+STRATEGY_ROW_RE = re.compile(r"^[^,]+, (\d{4,6}[A-Z]?), ")
+
+
+def parse_strategy_row_code(desc):
+    """策略頁列 desc（「名稱, 代號, 區域, 年數」）→ 代號；非列格式回 None。"""
+    m = STRATEGY_ROW_RE.match(desc or "")
+    return m.group(1) if m else None
+
+
+def parse_count(text, marker):
+    """從「共選入9檔」「❮取代❯完成後共 9 檔」這類文字取檔數；取不到回 None。"""
+    if marker not in (text or ""):
+        return None
+    m = re.search(r"共\s*選?入?\s*(\d+)\s*檔", text)
+    return int(m.group(1)) if m else None
+
+
+def strategy_page_codes(ax, pid):
+    """當前策略分區的全部標的代號（先回頂，再捲動收集到穩定為止）。
+
+    列表會停在上次捲動的位置——不先回頂，從中段開始收集會漏掉上半部，
+    檔數對不上導致整個取代流程被放棄。
+    """
+    def visible():
+        out = set()
+        for _e, d in ax.descs(ax.window(pid)):
+            code = parse_strategy_row_code(d)
+            if code:
+                out.add(code)
+        return out
+    for _ in range(30):                # 回頂：到頂後向上捲成 no-op、畫面不再變
+        before = visible()
+        ax.scroll_page(pid, action="AXScrollUpByPage")
+        time.sleep(0.5)
+        if visible() == before:
+            break
+    codes = visible()
+    for _ in range(30):
+        before = set(codes)
+        ax.scroll_page(pid)
+        time.sleep(0.5)
+        codes |= visible()
+        if codes == before:
+            break
+    return codes
+
+
+def current_layout_list(ax, pid):
+    """布局自選頁當前停留的清單名（AXSelected 分頁）；讀不到回 None。"""
+    w = goto_layout_page(ax, pid)
+    for name, selected, _el in watchlist_tabs(ax, w):
+        if selected:
+            return name
+    return None
+
+
+def replace_watchlist_from_strategy(ax, pid, strategy_tab, list_name):
+    """把策略頁台股分區的全部標的「取代」寫入指定自選清單，回傳寫入的代號集合。
+
+    佈局的眼睛：清單不刷新，新進價值區的標的永遠不會成為買進候選。
+    流程是三步彈窗（勾選 → 模式＋目標清單 → 清單確認），每步都有可讀的
+    檔數文字當驗證點；任一步不符就關閉彈窗回 None、不動清單。「取代」會
+    刪掉不在本次選取的標的——**分區讀到空集合時直接放棄**，寧可沿用舊
+    清單，不可把清單清空（checkbox 勾選狀態讀不到，檔數文字是唯一判準）。
+    """
+    def texts():
+        return [d for _e, d in ax.descs(ax.window(pid), "AXStaticText") if d]
+
+    def close_popup():
+        c = ax.by_desc(ax.window(pid), "popup close")
+        if c:
+            ax.press(c[0])
+            time.sleep(0.6)
+
+    tab = ax.by_desc(ax.window(pid), "策略")
+    if not tab:
+        return None
+    press_verified(ax, pid, tab[0],
+                   lambda w: bool(ax.by_desc(w, "add stock off")), "進入策略頁")
+    sub = ax.by_desc(ax.window(pid), strategy_tab)
+    if not sub:
+        return None
+    press_scrolled(ax, sub[0])
+    time.sleep(1.2)
+    sub = ax.by_desc(ax.window(pid), strategy_tab)
+    if not sub or not ax.attr(sub[0], "AXSelected"):
+        return None                    # 分頁沒切過去（AXSelected 可讀）
+
+    codes = strategy_page_codes(ax, pid)
+    if not codes:
+        return None                    # 空分區不取代
+
+    add = ax.by_desc(ax.window(pid), "add stock off")
+    if not add:
+        return None
+    press_verified(ax, pid, add[0],
+                   lambda w: any("共選入" in d for _e, d in ax.descs(w, "AXStaticText")),
+                   "開加自選步驟1")
+    picked = next((parse_count(d, "共選入") for d in texts() if "共選入" in d), None)
+    if picked != len(codes):           # 預設全選應恰為分區檔數
+        close_popup()
+        return None
+
+    press_verified(ax, pid, ax.by_desc(ax.window(pid), "下一步")[0],
+                   lambda w: any("完成後共" in d for _e, d in ax.descs(w, "AXStaticText")),
+                   "進步驟2")
+    ax.press(ax.by_desc(ax.window(pid), "取代")[0])
+    time.sleep(0.6)
+    if not any("❮取代❯" in d for d in texts()):
+        close_popup()
+        return None
+
+    els = ax.find(ax.window(pid), lambda e: True)
+    try:
+        idx = next(i for i, e in enumerate(els)
+                   if ax.attr(e, "AXDescription") == list_name)
+        cb = next(e for e in els[idx:]
+                  if ax.attr(e, "AXDescription") == "checkbox uncheck")
+    except StopIteration:
+        close_popup()
+        return None
+    ax.press(cb)
+    time.sleep(0.6)
+    after = next((parse_count(d, "完成後共") for d in texts() if "完成後共" in d), None)
+    if after != len(codes):
+        close_popup()
+        return None
+
+    # 步驟2 確認。內容**有變**（有標的將被移除）才會出現「清單確認」畫面，
+    # 冪等取代（內容不變）直接完成——兩種結局都要接。
+    ax.press(ax.by_desc(ax.window(pid), "確認")[0])
+
+    def done_or_confirm():
+        """回 "done"（成功 toast 或彈窗已關回策略頁）／"confirm"／None（還在等）"""
+        w = ax.window(pid)
+        ts = [d for _e, d in ax.descs(w, "AXStaticText") if d]
+        if any("加自選成功" in d for d in ts):
+            return "done"
+        if any("清單確認" in d for d in ts):
+            return "confirm"
+        if (not any("完成後共" in d for d in ts)
+                and ax.by_desc(w, "add stock off")):
+            return "done"              # toast 可能已消失，彈窗關了就是完成
+        return None
+
+    deadline = time.time() + 10.0
+    state = None
+    while time.time() < deadline and state is None:
+        state = done_or_confirm()
+        if state is None:
+            time.sleep(0.4)
+    if state is None:
+        close_popup()
+        return None
+    if state == "confirm":
+        final = next((parse_count(d, "共選入") for d in texts() if "共選入" in d), None)
+        if final != len(codes):
+            close_popup()
+            return None
+        ax.press(ax.by_desc(ax.window(pid), "確認")[0])
+        deadline = time.time() + 10.0
+        while time.time() < deadline:
+            if done_or_confirm() == "done":
+                return codes
+            time.sleep(0.4)
+        return None                    # 沒等到完成就當失敗——寧可誤報失敗
+    return codes
+
+
+def write_ios_field(ax, pid, field_idx, digits, attempts=3):
+    """iOS 軟鍵盤款欄位（AXValue 同步可讀那型）的寫入，回傳是否確認寫入。
+
+    點擊聚焦 → 退格清空 → 打字 → `\\r` 收鍵盤 → 讀回驗證。⊗ 清空會掉
+    焦點、AXPress 聚焦偶發不成立，所以聚焦用座標點擊、清空用退格；游標
+    未全選時打字是插入，不清空會拼出「51」這種錯值，讀回驗證會攔下重試。
+    另一型「提交前 AXValue 讀不到」的欄位（離職倒數報酬彈窗）不能用本
+    函式——讀回永遠失敗，見 record_daily_return 的提交後驗證。
+    """
+    def current():
+        return str(ax.attr(ax.text_fields(ax.window(pid))[field_idx],
+                           "AXValue") or "").replace(",", "")
+    for _ in range(attempts):
+        fields = ax.text_fields(ax.window(pid))
+        if field_idx >= len(fields):
+            return False
+        f = fields[field_idx]
+        p, s = ax.point(f), ax.size(f)
+        if p is None or s is None:
+            return False
+        ax.click(p[0] + s[0] / 2, p[1] + s[1] / 2)
+        time.sleep(1.0)
+        ax.backspace(pid, len(current()) + 3)
+        time.sleep(0.5)
+        ax.keystroke(pid, digits)
+        time.sleep(0.5)
+        ax.keystroke(pid, "\r")
+        time.sleep(0.8)
+        if current() == digits:
+            return True
+    return False
+
+
+def run_tier_calculator(ax, pid, idle_cash, names_count):
+    """跑位階運算機：輸入閒錢與檔數 → AI 運算 → App 跳到布局自選頁、
+    每列的位階股數／風控股數更新為今日值。回傳是否成功。
+
+    位階股數是 App 對「這筆閒錢分 N 檔」給的每檔買進建議——買進側的錨，
+    與賣出側的 suggest_qty 對稱。入口「前往位階運算機」只在風控運算頁
+    黃鈕為「建議布局」態時存在，找不到就回 False（當日不可買）。閒錢欄
+    App 會自動帶值但不可靠（實測見過帶建議布局金額、也見過帶持股市值），
+    一律主動寫入。「AI運算」鈕在鍵盤開著時被「完成」浮鈕遮擋而假成功——
+    write_ios_field 的 `\\r` 已收鍵盤，仍以 press_verified 驗證跳轉。
+    """
+    w = goto_posture_page(ax, pid)
+    if w is None:
+        return False
+    entry = ax.by_desc(w, "前往位階運算機")
+    if not entry:
+        return False                   # 黃鈕是調節態，沒有布局入口
+    # 判準必須是運算機**獨有**的元素——運算頁本身就有 4 個 text_fields，
+    # 用欄位數當判準會在 press 假成功時放行，接著把值寫進運算頁的欄位
+    press_verified(ax, pid, entry[0],
+                   lambda w: bool(ax.by_desc(w, "AI運算今天可以買幾股")),
+                   "進入位階運算機")
+    if not (write_ios_field(ax, pid, 0, str(int(round(idle_cash))))
+            and write_ios_field(ax, pid, 1, str(int(names_count)))):
+        close = ax.by_desc(ax.window(pid), "popup close")
+        if close:
+            ax.press(close[0])
+        return False
+    # 鍵盤 session 未收乾淨時 App 會吞掉按鈕動作（\r 偶發失效、「完成」浮鈕
+    # 不在 AX tree 驗不到）——補一發 \r 再點標題文字區（無互動元素）保險收掉。
+    ax.keystroke(pid, "\r")
+    time.sleep(1.0)
+    win = ax.window(pid)
+    p, s = ax.point(win), ax.size(win)
+    ax.click(p[0] + s[0] / 2, p[1] + 100)
+    time.sleep(0.8)
+    btn = ax.by_desc(ax.window(pid), "AI運算今天可以買幾股")
+    if not btn:
+        return False
+    try:
+        press_verified(ax, pid, btn[0],
+                       lambda w: bool(ax.by_desc(w, "布局 自選")),
+                       "AI運算跳轉布局自選")
+    except RuntimeError:
+        return False
+    return True
 
 
 def month_total_from_texts(texts):
