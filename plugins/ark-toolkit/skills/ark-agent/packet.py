@@ -23,6 +23,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -36,6 +37,36 @@ PACKET_DIR = os.path.expanduser("~/.ark-toolkit/agent/packets")
 SYNC_PY = os.path.abspath(os.path.join(HERE, "..", "ark-sync", "sync.py"))
 BENCHMARK = "0050"
 RECENT_CALENDAR_DAYS = 40      # 約 20 個交易日的回看視窗
+
+# 決策準則檔：複盤累積下來、要餵回決策層的經驗。內容是個人化的（每個使用者的
+# 檢討結論不同），所以預設放執行資料夾，`ARK_RULES` 可指到專案內以便版控。
+RULES_PATH = os.environ.get(
+    "ARK_RULES", os.path.expanduser("~/.ark-toolkit/decision-rules.md"))
+
+
+# ---------------------------------------------------------------- 決策準則
+
+def rule_ids(text):
+    """抽出準則編號（標題行形如 `### R-001 標題`）。
+
+    只認標題行：內文引用 R-999 是在講另一條準則，不是宣告新的一條，
+    否則決策層會拿到一堆不存在的編號去填 rules_applied。
+    """
+    return re.findall(r"^###\s+(R-\d+)", text, re.MULTILINE)
+
+
+def load_rules(path=RULES_PATH):
+    """讀決策準則檔；讀不到就當作沒有準則。
+
+    這是後加的功能，它故障不該讓當天整天不交易——決策照常走硬邊界，
+    只是少了經驗輔助。原文與編號都帶上：原文給決策層脈絡，編號供其引用。
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return {"source": path, "text": "", "ids": []}
+    return {"source": path, "text": text, "ids": rule_ids(text)}
 
 
 # ---------------------------------------------------------------- 紀律邊界（純函式）
@@ -129,8 +160,13 @@ def serialize_layout(view):
 
 
 def build_packet(date, generated_at, holdings, declared, posture, layout,
-                 positions, balance, settlements, quotes, recent_daily, sync_ok, diff):
-    """組裝決策包（全注入，不碰 AX 與 API，任何平台可測）。"""
+                 positions, balance, settlements, quotes, recent_daily, sync_ok, diff,
+                 rules=None):
+    """組裝決策包（全注入，不碰 AX 與 API，任何平台可測）。
+
+    `rules` 一併進 hash：journal 每筆決策都綁 packet_hash，等於鎖住「當天用的是
+    哪一版準則」。少了這條，準則檔改過之後就無法把損益歸因回當時的準則。
+    """
     pk = {
         "schema": 1,
         "date": date,
@@ -159,6 +195,7 @@ def build_packet(date, generated_at, holdings, declared, posture, layout,
             "codes": news_scope_codes(holdings, layout),
             "note": "僅可就以上標的與其產業做新聞搜尋，不可掃全市場",
         },
+        "rules": rules or {"source": None, "text": "", "ids": []},
     }
     pk["hash"] = packet_hash(pk)
     return pk
@@ -296,16 +333,17 @@ def main():
             journal.settle_previous(api, date)
 
     now = dt.datetime.now().replace(microsecond=0).isoformat()
+    rules = load_rules()
     pk = build_packet(date=date, generated_at=now, holdings=holdings, declared=declared,
                       posture=posture, layout=layout, positions=positions, balance=balance,
                       settlements=settlements, quotes=quotes, recent_daily=recent,
-                      sync_ok=sync_ok, diff=diff)
+                      sync_ok=sync_ok, diff=diff, rules=rules)
     path = save_packet(pk)
 
     print(f"\n✅ 決策包已存至 {path}")
     print(f"   持倉 {len(holdings)} 檔｜對帳 {'一致' if sync_ok else f'不一致 {diff}'}"
           f"｜參考調節 {pk['discipline']['adjust_amount']:,.0f}"
-          f"｜news_scope {len(codes)} 檔")
+          f"｜news_scope {len(codes)} 檔｜準則 {len(rules['ids'])} 條")
     if not sync_ok:
         print("   ⚠️ 對帳不一致——建議先處理再做決策，否則紀律邊界建立在錯的持倉上")
     return 0

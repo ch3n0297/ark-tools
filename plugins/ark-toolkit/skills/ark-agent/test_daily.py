@@ -74,6 +74,57 @@ class TestPromptRendering(unittest.TestCase):
                                 envelope="/e", decision="/d", date="2026-08-11")
 
 
+class TestQuotaExhausted(unittest.TestCase):
+    """決策模型撞到用量上限時，claude CLI 也是非零離開——與 prompt 寫錯、
+    網路斷線混在一起的話，換模型重試就會在不該重試的時候白燒一次決策。"""
+
+    LIMIT = ("You've reached your Fable 5 limit. Run /usage-credits to "
+             "continue or switch models with /model.")
+
+    def test_額度訊息為真(self):
+        self.assertTrue(daily.is_quota_exhausted(self.LIMIT))
+
+    def test_額度訊息夾在其他輸出中也認得(self):
+        """實際 log 裡前面還有工具呼叫與警告，額度訊息在最後一行"""
+        self.assertTrue(daily.is_quota_exhausted(
+            f"讀取 packet…\nDeprecationWarning: ...\n{self.LIMIT}\n"))
+
+    def test_其他失敗為假(self):
+        for out in ("", "Error: connection refused",
+                    "提示模板有未取代的佔位符：['MYSTERY_PATH']",
+                    "✅ 決策已寫入 /Users/hjc/.ark-toolkit/agent/decisions/x.json"):
+            self.assertFalse(daily.is_quota_exhausted(out), out)
+
+
+class TestFallbackModel(unittest.TestCase):
+    """額度耗盡就整天不交易的話，實驗數據會出現非市場因素的缺口——
+    但降級只在額度這一種失敗上成立，其餘照舊直接失敗。"""
+
+    LIMIT = "You've reached your Fable 5 limit. Run /usage-credits to continue."
+
+    def test_額度耗盡回傳接手模型(self):
+        self.assertEqual(
+            daily.fallback_model(1, self.LIMIT, "fable", "opus"), "opus")
+
+    def test_成功時不降級(self):
+        """離開碼 0 代表決策已產出，輸出裡出現什麼字樣都不該再跑一次"""
+        self.assertIsNone(daily.fallback_model(0, self.LIMIT, "fable", "opus"))
+
+    def test_非額度失敗不降級(self):
+        self.assertIsNone(
+            daily.fallback_model(1, "Error: connection refused", "fable", "opus"))
+
+    def test_接手模型與現用相同時不降級(self):
+        """否則會拿同一個已耗盡的額度池再撞一次牆"""
+        self.assertIsNone(
+            daily.fallback_model(1, self.LIMIT, "opus", "opus"))
+
+    def test_未設定接手模型時不降級(self):
+        for fallback in ("", None):
+            self.assertIsNone(
+                daily.fallback_model(1, self.LIMIT, "fable", fallback), fallback)
+
+
 class TestSettleOutcome(unittest.TestCase):
     """結算的每一步都要盡力做完再回報——成交對回失敗不該讓淨值記錄也跳過，
     否則熔斷基準會斷掉。"""

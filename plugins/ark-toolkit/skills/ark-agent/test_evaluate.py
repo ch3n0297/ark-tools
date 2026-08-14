@@ -221,5 +221,33 @@ class TestEvaluateAll(unittest.TestCase):
         self.assertIn("描述性統計", text)
 
 
+class TestDividendHonesty(unittest.TestCase):
+    """kbars 給的是未還原原始價（實證：0050 於 2026-07-21 除息 0.6 元，而
+    2026-07-01 的快取收盤仍是除息前的 109.35）。沒有除權息資料時 `adj` 其實
+    等於 `raw`，此時宣稱「已含現金股利校正」會讓跨越除息日的低估數字看起來
+    可信——那是靜默失真，比明顯的錯誤更難發現。"""
+
+    def test_無資料時不得宣稱已校正(self):
+        note = evaluate.dividend_note(0)
+        self.assertNotIn("已含", note)
+        self.assertIn("未", note)
+        self.assertIn("低估", note)
+
+    def test_有資料時標明筆數(self):
+        self.assertIn("12", evaluate.dividend_note(12))
+
+    def test_報告帶出除權息資料筆數(self):
+        """render 要據此決定講哪一句，report 就得先知道有沒有資料"""
+        self.assertEqual(evaluate.evaluate_all([], {}, {}, [], [])["dividends_loaded"],
+                         0)
+        divs = [{"code": "0050", "ex_date": "2026-07-21", "cash": 0.6}]
+        self.assertEqual(evaluate.evaluate_all([], {}, {}, [], divs)["dividends_loaded"],
+                         1)
+
+    def test_render_無資料時出現警告(self):
+        report = evaluate.evaluate_all([], {}, {}, [], [])
+        self.assertIn("未實際校正", evaluate.render(report))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -47,6 +47,10 @@ WINDOWS = {"decide": ("10:00", 60), "settle": ("14:30", 240)}
 # 決策模型。無人值守下要動真錢，判斷品質是最不該省的地方。
 DECISION_MODEL = os.environ.get("ARK_DECISION_MODEL", "fable")
 
+# 主模型撞到用量上限時的接手模型。額度是跟著模型走的，撞牆那天會整天不交易，
+# 實驗數據就多一個與市場無關的缺口——換一個額度池把當天補回來。
+FALLBACK_MODEL = os.environ.get("ARK_DECISION_FALLBACK", "opus")
+
 
 # ---------------------------------------------------------------- 純邏輯
 
@@ -91,6 +95,26 @@ def render_prompt(template, packet, envelope, decision, date):
     if left:
         raise ValueError(f"提示模板有未取代的佔位符：{sorted(set(left))}")
     return out
+
+
+def is_quota_exhausted(output):
+    """claude CLI 是否因用量上限而離開。
+
+    只認額度訊息獨有的 `/usage-credits` 指引——把所有非零離開都當額度問題的話，
+    prompt 寫錯或網路斷線也會換個模型再燒一次決策。
+    """
+    return "/usage-credits" in output
+
+
+def fallback_model(code, output, current, fallback):
+    """該不該換模型重試；要換就回傳接手模型，否則 None。
+
+    降級只在額度這一種失敗上成立：其餘故障換模型也是一樣的結果。
+    接手模型與現用相同時不重試——那是拿同一個已耗盡的額度池再撞一次。
+    """
+    if code == 0 or not fallback or current == fallback:
+        return None
+    return fallback if is_quota_exhausted(output) else None
 
 
 def settle_failures(results):
@@ -147,6 +171,27 @@ def run(mode, *args):
                               check=False).returncode
 
 
+def ask_model(mode, prompt, model):
+    """LLM 插槽：只給讀檔／寫檔／查新聞，**不給 Bash**——它無法自行送單或改紀錄。
+    回傳 (離開碼, 輸出)，輸出同時進 daily.log。
+
+    先收進記憶體再寫檔而非直接導向 log：額度耗盡與其他故障都是非零離開，
+    要分辨只能看輸出內容。
+    """
+    log(mode, f"呼叫 claude（{model}）產生決策…")
+    proc = subprocess.run(
+        ["claude", "-p", prompt,
+         "--model", model,
+         "--allowedTools", "Read", "Write", "WebSearch", "WebFetch",
+         "--permission-mode", "acceptEdits",
+         "--output-format", "text"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, cwd=STATE, check=False)
+    with open(LOG, "a", encoding="utf-8") as fh:
+        fh.write(proc.stdout)
+    return proc.returncode, proc.stdout
+
+
 # ---------------------------------------------------------------- 模式
 
 def decide(date, backend):
@@ -179,16 +224,11 @@ def decide(date, backend):
     with open(os.path.join(HERE, "prompts", "decide.md"), encoding="utf-8") as fh:
         prompt = render_prompt(fh.read(), packet, envelope, decision, date)
 
-    # LLM 插槽：只給讀檔／寫檔／查新聞，**不給 Bash**——它無法自行送單或改紀錄
-    log(mode, f"呼叫 claude（{DECISION_MODEL}）產生決策…")
-    with open(LOG, "a", encoding="utf-8") as fh:
-        rc = subprocess.run(
-            ["claude", "-p", prompt,
-             "--model", DECISION_MODEL,
-             "--allowedTools", "Read", "Write", "WebSearch", "WebFetch",
-             "--permission-mode", "acceptEdits",
-             "--output-format", "text"],
-            stdout=fh, stderr=subprocess.STDOUT, cwd=STATE, check=False).returncode
+    rc, out = ask_model(mode, prompt, DECISION_MODEL)
+    successor = fallback_model(rc, out, DECISION_MODEL, FALLBACK_MODEL)
+    if successor:
+        notify(mode, f"⚠️ {DECISION_MODEL} 額度耗盡，改用 {successor} 重試")
+        rc, out = ask_model(mode, prompt, successor)
     if rc != 0:
         notify(mode, "🛑 決策產生失敗（claude 非零離開）")
         return 1
@@ -214,10 +254,17 @@ def settle(date):
         return 0
     if not in_window(mode):
         return 0
+    # 兩個寫 ARK App 的步驟排在最後且相鄰：AX 操作最脆弱，先把純資料的記錄
+    # 做完，App 出問題也不會連累成交對回與淨值——那兩者是熔斷基準的來源。
     results = [
         ("成交對回", run(mode, os.path.join(HERE, "journal.py"), "settle")),
         ("淨值記錄", run(mode, os.path.join(HERE, "equity.py"))),
+        # 除權息預告表只含尚未發生的事件，除息日一過就從表上消失——必須每天
+        # 抓、累積存檔，等前瞻報酬到期時資料才在。放在寫 App 之前：純網路取數，
+        # 失敗也不影響後面兩步。
+        ("除權息資料", run(mode, os.path.join(HERE, "dividends.py"))),
         ("庫存/現金同步", run(mode, SYNC, "--allow-delete", "--with-cash")),
+        ("實現收益記錄", run(mode, os.path.join(HERE, "record_return.py"))),
     ]
     failed = settle_failures(results)
     if failed:

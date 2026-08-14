@@ -1,0 +1,6 @@
+# 發布用：本目錄會以 git archive 匯出並 rsync 到公開 repo（ch3n0297/ark-tools），
+# 而發布前會在 staged 樹跑測試——不擋掉的話 __pycache__ 會跟著進公開版控。
+__pycache__/
+*.pyc
+*.log
+.DS_Store

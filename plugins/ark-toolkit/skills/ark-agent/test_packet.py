@@ -1,4 +1,5 @@
 """ark-agent 決策包純邏輯測試（不需要 ARK 或 Shioaji，任何平台可跑）"""
+import os
 import unittest
 
 import packet
@@ -146,6 +147,86 @@ class TestPositionsDiff(unittest.TestCase):
         del positions["0050"]
         positions["9999"] = {"qty": 1, "avg_price": 1.0}
         self.assertEqual(packet.positions_diff(HOLDINGS, positions), ["0050", "9999"])
+
+
+class TestRuleIds(unittest.TestCase):
+    """決策層要在 rules_applied 引用準則編號——先抽成清單，比讓它自己
+    從一大段 markdown 裡認可靠。"""
+
+    TEXT = ("# 決策準則\n\n## 生效中\n\n"
+            "### R-001 主軌滿檔且持股掛升溫時優先評估換股\n"
+            "- 來源：2026-08-13\n\n"
+            "### R-002 跨檔比較看位階金額，不看 tier_qty\n"
+            "- 來源：2026-08-13\n\n"
+            "## 已淘汰\n\n"
+            "### R-000 這條被損益推翻了\n")
+
+    def test_依序抽出全部編號(self):
+        self.assertEqual(packet.rule_ids(self.TEXT), ["R-001", "R-002", "R-000"])
+
+    def test_只認標題行的編號(self):
+        """內文提到 R-001 不算宣告一條新準則，否則引用一次就多一條"""
+        self.assertEqual(
+            packet.rule_ids("### R-001 標題\n- 這條取代了 R-999 的做法\n"),
+            ["R-001"])
+
+    def test_空文字回空清單(self):
+        self.assertEqual(packet.rule_ids(""), [])
+
+
+class TestLoadRules(unittest.TestCase):
+    """準則檔是後加的功能，它故障不該讓當天完全不交易——讀不到就當作沒有準則，
+    決策照常走硬邊界。"""
+
+    def test_讀得到就帶原文與編號(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "rules.md")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("### R-001 測試準則\n內容\n")
+            rules = packet.load_rules(path)
+        self.assertEqual(rules["ids"], ["R-001"])
+        self.assertIn("測試準則", rules["text"])
+        self.assertEqual(rules["source"], path)
+
+    def test_檔案不存在回空但不拋(self):
+        rules = packet.load_rules("/nonexistent/decision-rules.md")
+        self.assertEqual(rules["ids"], [])
+        self.assertEqual(rules["text"], "")
+
+    def test_路徑是目錄也不拋(self):
+        rules = packet.load_rules("/tmp")
+        self.assertEqual(rules["ids"], [])
+
+
+class TestPacketCarriesRules(unittest.TestCase):
+    """準則要進 packet_hash：journal 每筆決策都綁 hash，等於鎖住「當天用的是
+    哪一版準則」。少了這條，事後複盤無法把損益歸因到準則——準則檔早就被改過了。"""
+
+    def build(self, rules=None):
+        return packet.build_packet(
+            date="2026-08-10", generated_at="2026-08-10T08:31:02",
+            holdings=HOLDINGS, declared=4, posture=POSTURE, layout=LAYOUT,
+            positions={}, balance=20000.0,
+            settlements={"today": 0.0, "t1": 0.0, "t2": 0.0},
+            quotes={}, recent_daily={}, sync_ok=True, diff=[], rules=rules)
+
+    def test_預設帶空準則不崩(self):
+        pk = self.build()
+        self.assertEqual(pk["rules"]["ids"], [])
+
+    def test_準則內容進入決策包(self):
+        pk = self.build({"source": "x.md", "text": "### R-001 甲\n", "ids": ["R-001"]})
+        self.assertEqual(pk["rules"]["ids"], ["R-001"])
+
+    def test_準則不同則_hash_不同(self):
+        a = self.build({"source": "x.md", "text": "### R-001 甲\n", "ids": ["R-001"]})
+        b = self.build({"source": "x.md", "text": "### R-001 乙\n", "ids": ["R-001"]})
+        self.assertNotEqual(a["hash"], b["hash"])
+
+    def test_準則相同則_hash_相同(self):
+        r = {"source": "x.md", "text": "### R-001 甲\n", "ids": ["R-001"]}
+        self.assertEqual(self.build(r)["hash"], self.build(r)["hash"])
 
 
 if __name__ == "__main__":

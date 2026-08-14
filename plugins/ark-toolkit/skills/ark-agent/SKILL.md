@@ -78,8 +78,12 @@ uv run skills/ark-agent/risk.py              # 2. 執行邊界 envelope
 uv run skills/ark-agent/journal.py record /tmp/decision.json   # 4. 紀律驗證＋鎖定
 uv run skills/ark-agent/execute.py --backend live              # 5. 送單
 
-# 14:30 盤後結算
-uv run skills/ark-agent/journal.py settle    # 成交對回、淨值、熔斷狀態、同步回 ARK
+# 14:30 盤後結算（daily.py settle 依序跑這五步，每步盡力做完再回報）
+uv run skills/ark-agent/journal.py settle    # 1. 成交對回
+uv run skills/ark-agent/equity.py            # 2. 淨值與熔斷狀態
+uv run skills/ark-agent/dividends.py         # 3. 除權息資料（報酬校正用，須每日累積）
+uv run skills/ark-sync/sync.py --allow-delete --with-cash   # 4. 庫存與現金同步回 ARK
+uv run skills/ark-agent/record_return.py     # 5. 當日已實現獲利記進離職倒數（僅獲利日）
 
 # 隨時看成績
 uv run skills/ark-agent/evaluate.py          # --json 出機器格式；--offline 不連線

@@ -91,6 +91,19 @@ def dividends_in_window(divs, code, start, end):
             if d.get("code") == code and start < d.get("ex_date", "") <= end]
 
 
+def dividend_note(n_events):
+    """報酬校正的可信度註記。
+
+    `market.fetch_daily` 走 `api.kbars`，那是未還原的原始成交價（實證：0050
+    於 2026-07-21 除息 0.6 元，而 2026-07-01 的快取收盤仍是除息前的 109.35）。
+    沒有除權息資料時 `adj` 其實等於 `raw`，此時宣稱「已含現金股利校正」會讓
+    跨越除息日的低估數字看起來可信——那是靜默失真，比明顯的錯誤更難發現。
+    """
+    if not n_events:
+        return "⚠️ 無除權息資料，adj 未實際校正——跨越除息日的報酬會低估"
+    return f"adj 已含現金股利校正（除權息事件 {n_events} 筆）"
+
+
 # ---------------------------------------------------------------- 單筆決策
 
 def exec_price_for(order, date, fill, daily, calendar):
@@ -202,7 +215,10 @@ def adherence(decision, pk, fill_entry):
 
 # ---------------------------------------------------------------- 彙總
 
-def evaluate_all(entries, packets, prices, benchmark_bars, dividends):
+def evaluate_all(entries, packets, prices, benchmark_bars, dividends,
+                 orders_of=core_orders):
+    """`orders_of` 決定要評估哪些委託，預設只取主軌以維持實驗效度。
+    複盤（review.py）傳入取全部的版本——衛星軌不進實驗統計，但要能被檢討。"""
     calendar = trading_days(benchmark_bars)
     bench_daily = {b["date"]: b for b in benchmark_bars}
     daily = {code: {b["date"]: b for b in bars} for code, bars in prices.items()}
@@ -226,7 +242,7 @@ def evaluate_all(entries, packets, prices, benchmark_bars, dividends):
         if pk:
             adherence_rows.append(adherence(d, pk, fe))
         fills = {(f["action"], f["code"]): f for f in (fe or {}).get("fills", [])}
-        for o in core_orders(d):
+        for o in orders_of(d):
             f = fills.get((o["action"], o["code"]))
             price, exec_status = exec_price_for(o, date, f, daily, calendar)
             row = {"date": date, "action": o["action"], "code": o["code"],
@@ -261,6 +277,7 @@ def evaluate_all(entries, packets, prices, benchmark_bars, dividends):
     return {
         "n_decision_days": len(decision_dates),
         "n_orders": len(orders_out),
+        "dividends_loaded": len(dividends),
         "missed": len(missed),
         "amended": amended,
         "overrides": overrides,
@@ -280,7 +297,8 @@ def render(report):
     out.append(f"決策日 {report['n_decision_days']}　單量 {report['n_orders']}"
                f"　缺席 {report['missed']}　修訂 {report['amended']}"
                f"　硬規則覆寫 {report['overrides']}")
-    out.append("\n【前瞻報酬】（賣出＝避開報酬；adj 已含現金股利校正）")
+    out.append("\n【前瞻報酬】（賣出＝避開報酬；"
+               f"{dividend_note(report.get('dividends_loaded', 0))}）")
     out.append("  視窗   已評/待期   勝率     平均報酬   平均超額(vs 0050)  受除權息影響")
     for n, h in report["horizons"].items():
         win = f"{h['win_rate']:.0%}" if h["win_rate"] is not None else "-"

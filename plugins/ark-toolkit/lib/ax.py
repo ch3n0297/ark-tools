@@ -55,10 +55,15 @@ def _running_app():
     return None
 
 
-def launch(timeout=20.0):
+def launch(timeout=60.0):
     """ARK 未執行時代為啟動，回傳 NSRunningApplication。
 
     先分清「未安裝」與「未開啟」——沒裝 App 的使用者被叫去「先開啟」是誤導。
+
+    timeout 給到 60 秒：wrapped iOS App 冷啟動要先做簽章驗證與 wrapper 初始化，
+    實測（2026-08-13 10:00 排程）20 秒不夠——`open -b` 明明成功拉起了 App，
+    卻在它註冊進 runningApplications 之前就逾時，整日決策因此落空。
+    這裡多等的代價只是啟動慢時晚幾十秒，比誤判成「未安裝」便宜得多。
     """
     if NSWorkspace.sharedWorkspace().URLForApplicationWithBundleIdentifier_(BUNDLE_ID) is None:
         raise ArkNotRunning(

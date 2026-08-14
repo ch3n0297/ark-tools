@@ -22,6 +22,7 @@
 | `ark-analyze` | 集中度、與 App 建議部位的偏離、風控檢查、歷史快照復盤 |
 | `ark-explore` | 探索全 App 結構，產出功能地圖（以版本號當快取鍵，版本沒變就跳過） |
 | `ark-agent` | 自動交易決策軌：盤中決策包、依 ARK 紀律決策並鎖定、自動下單、成交對回、滾動評估 |
+| `ark-review` | 決策複盤：把決策、當時理由、成交與前瞻報酬組成案例，依損益維護決策準則 |
 
 | 參考資料 | 用途 |
 |---|---|
@@ -86,7 +87,7 @@ cd plugins/ark-toolkit/lib                && uv run --no-project --python 3.13 -
 cd plugins/ark-toolkit/skills/ark-sync    && PYTHONPATH=../../lib uv run --no-project --python 3.13 python -m unittest test_sync
 cd plugins/ark-toolkit/skills/ark-analyze && PYTHONPATH=../../lib uv run --no-project --python 3.13 python -m unittest test_analyze
 cd plugins/ark-toolkit/skills/ark-explore && PYTHONPATH=../../lib uv run --no-project --python 3.13 python -m unittest test_explore
-cd plugins/ark-toolkit/skills/ark-agent   && PYTHONPATH=../../lib uv run --no-project --python 3.13 python -m unittest test_market test_packet test_journal test_evaluate test_risk test_tracks test_equity test_execute test_daily test_phase0
+cd plugins/ark-toolkit/skills/ark-agent   && PYTHONPATH=../../lib uv run --no-project --python 3.13 python -m unittest test_market test_packet test_journal test_evaluate test_risk test_tracks test_equity test_execute test_daily test_phase0 test_review test_record_return test_dividends
 ```
 
 ## 通用性原則（給使用本 plugin 的 coding agent）

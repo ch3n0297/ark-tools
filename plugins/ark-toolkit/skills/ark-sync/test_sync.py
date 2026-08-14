@@ -372,6 +372,25 @@ class TestPostureCash(unittest.TestCase):
         self.assertEqual(sync.posture_cash(1000.0, settle, 0.0), 0.0)
 
 
+class TestCashStepWhenNoChanges(unittest.TestCase):
+    """庫存無變更時仍要不要同步現金。
+
+    現金與庫存是兩件獨立的事：庫存一致不代表現金欄也對。實例
+    （2026-08-14）——換股當天庫存同步成功、現金欄寫入失敗，重跑時因為
+    庫存已一致就提早收工，現金永遠不會補上，欄位停在舊值直到有人察覺。
+    """
+
+    def test_要求同步現金時仍要做(self):
+        self.assertTrue(sync.cash_step_needed(with_cash=True, dry_run=False))
+
+    def test_未要求就不做(self):
+        self.assertFalse(sync.cash_step_needed(with_cash=False, dry_run=False))
+
+    def test_dry_run_不寫入(self):
+        """預演不能真的去點 App 的數字鍵盤"""
+        self.assertFalse(sync.cash_step_needed(with_cash=True, dry_run=True))
+
+
 class TestPlatformGuard(unittest.TestCase):
     def test_非_macOS_應報錯(self):
         for p in ("linux", "win32"):
@@ -392,13 +411,16 @@ class FakeAx:
              "posture": {"自選", "運算", "風控 運算"}}
 
     def __init__(self, page="posture", press_effective=True,
-                 click_effective=True, restart_fixes=False):
+                 click_effective=True, restart_fixes=False,
+                 press_needs_scroll=False):
         self.page = page
         self.press_effective = press_effective
         self.click_effective = click_effective
         self.restart_fixes = restart_fixes
+        self.press_needs_scroll = press_needs_scroll
         self.restarted = False
         self.clicks = []
+        self.performed = []
         self._last_pressed = None
 
     def window(self, pid):
@@ -415,9 +437,14 @@ class FakeAx:
         elif name == "運算":
             self.page = "posture"
 
+    def perform(self, el, action):
+        self.performed.append((el, action))
+        return 0
+
     def press(self, el):
         self._last_pressed = el
-        if self.press_effective:
+        scrolled = (el, "AXScrollToVisible") in self.performed
+        if self.press_effective and (scrolled or not self.press_needs_scroll):
             self._act(el)
         return 0                                   # AXPress 永遠「成功」
 
@@ -494,6 +521,14 @@ class TestPressVerified(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             ark.press_verified(fake, 1, "EL:自選", self.pred(fake), "去自選",
                                timeout=0.05)
+
+    def test_按之前先捲進可視範圍(self):
+        # 離屏元素 AXPress 靜默失效、座標點擊點在視窗外——唯一救法是先捲進畫面
+        fake = FakeAx(press_needs_scroll=True)
+        w = ark.press_verified(fake, 1, "EL:自選", self.pred(fake), "去自選",
+                               timeout=0.05)
+        self.assertEqual(w, "watchlist")
+        self.assertIn(("EL:自選", "AXScrollToVisible"), fake.performed)
 
 
 class TestEnsureResponsive(unittest.TestCase):

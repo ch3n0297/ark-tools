@@ -21,7 +21,10 @@
    - 買進只能挑 `discipline.buy_candidates`（價值區）的標的
    - `discipline.adjust_required_before_buy` 為 true 時，賣單估值總和必須
      **覆蓋 `discipline.adjust_amount`** 才可以有買單
-   - 執行後主軌檔數不得超過 `envelope.core.max_names`
+   - 執行後主軌檔數不得超過 `envelope.core.max_names`。這條管的是**執行後
+     同時持有幾檔**，不是「只能加碼手上那檔」——把一檔全部賣掉、同時買進
+     候選中更適合的一檔，執行後仍是 1 檔，**合規**。主軌滿檔時換股是可選項，
+     不要因為檔數上限就默認只能加碼既有部位。
 4. 衛星軌（`"track": "satellite"`）豁免上述紀律，但：
    - 標的必須在 `envelope.tracks.satellite.allowlist` 內
    - 淨買進不得超過 `envelope.tracks.satellite.remaining`
@@ -36,11 +39,31 @@
    與賣出側的 `suggest_qty` 對稱。`ark_basis` 填
    `{"signal": "tier_qty", "value": N}`；偏離要在 reason 說明理由，
    沒有强理由就照建議。`risk_qty` 是「單押一檔」的上限參考，不是建議。
+5c. **買哪一檔要跨檔比較，不能只看單檔**。`buy_candidates` 常有多檔同時合格，
+   資格清單不等於選擇準則。決定前把候選在 `ark.layout.rows` 的讀數擺在一起
+   比：位階金額（`tier_amount`，App 對這筆閒錢在該檔的建議投入）、折溢價
+   （`premium`，ETF 折價較有利）、位階標籤（`tiers` 掛「升溫」是警訊）。
+   `tier_qty` 是 `tier_amount ÷ price` 的結果，**不能拿來跨檔比較**——它會
+   系統性偏袒低價標的。`reason` 要寫「為什麼是這檔而不是其他候選」。
 6. **限價要貼著現價，不得偏離超過 2%**。實際會送出的價格是：賣單取
    `limit_low`、買單取 `limit_high`——那是你願意接受的最差價格。把賣單的
    `limit_low` 掛在市價 2% 以下，等於事先接受 −2% 的滑價，而且無人值守時
    沒人會發現。**偏離超過 2% 的單會被送出前檢查擋下，整天就不交易了。**
    建議用 `market.quotes[code].close` 的 ±0.5% 當區間。
+
+## 決策準則（`packet.rules`）
+
+`rules.text` 是歷次複盤累積下來的經驗，由實際損益淬煉而成；`rules.ids` 是可
+引用的編號清單。**優先序：硬邊界 ＞ 準則 ＞ 你的當下判斷。**
+
+- 準則只能**收窄**選擇，不能放寬硬邊界。兩者衝突時一律照硬邊界，並在
+  `rationale` 說明是哪一條準則被硬邊界擋下。
+- 準則各有狀態：標「試行」的只有推理支持、還沒有損益證據，可以不採用但要說
+  理由；標「生效」的已被損益證據支持過，偏離要有强理由。
+- 採用了哪幾條，填進 `rules_applied`（如 `["R-001", "R-003"]`）。**這是準則能
+  被自己的損益推翻的唯一途徑**——沒有標記，複盤就無從得知哪條準則帶來了什麼
+  結果，下一輪就只能憑感覺改規則。
+- 沒有準則適用就填 `[]`，不要硬套。準則檔是空的（新裝或尚未累積）也照常決策。
 
 ## 寫出決策
 
@@ -58,6 +81,7 @@
      "reason": "升溫且獲利，單檔即覆蓋參考調節金額的一半"}
   ],
   "rationale": "整體判斷理由，引用 posture.gap 與位階警示",
+  "rules_applied": ["R-001"],
   "news_used": [{"code": "0050", "summary": "…", "source": "…"}]
 }
 ```

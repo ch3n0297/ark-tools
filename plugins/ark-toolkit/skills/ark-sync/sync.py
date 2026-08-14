@@ -366,8 +366,10 @@ def main():
         print("    --force 已指定，繼續執行。")
 
     if not plan:
-        print("\n✅ 已完全一致，無需變更")
-        return 0
+        print("\n✅ 庫存已完全一致，無需變更")
+        if not cash_step_needed(args.with_cash, args.dry_run):
+            return 0
+        return 0 if sync_cash(ax, pid, cfg) else 1
 
     if args.dry_run:
         print("\n（dry-run，未做任何寫入）")
@@ -424,6 +426,16 @@ def main():
         fail += 1
     print("建議執行 --dry-run 再確認一次結果。")
     return 1 if fail else 0
+
+
+def cash_step_needed(with_cash, dry_run):
+    """庫存無變更時仍要不要同步現金。
+
+    現金與庫存是兩件獨立的事：庫存一致不代表現金欄也對。實例（2026-08-14）
+    ——換股當天庫存同步成功、現金欄寫入失敗，重跑時因為庫存已一致就提早收工，
+    現金永遠補不上，欄位停在舊值直到有人察覺。
+    """
+    return bool(with_cash) and not dry_run
 
 
 def sync_cash(ax, pid, cfg):

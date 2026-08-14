@@ -316,6 +316,9 @@ def press_verified(ax, pid, el, pred, what, timeout=6.0):
     按了不驗證，失敗只會在更遠處的 wait_for 逾時，錯誤現場早就不見了。
     回傳驗證後的 window；兩種方式都無效則拋 RuntimeError。
     """
+    # 離屏元素兩種按法都救不了：AXPress 靜默失效、座標點擊點在視窗外。
+    # 先捲進畫面（已可見時是 no-op）；App 改版把頁面內容推長就會踩到。
+    ax.perform(el, "AXScrollToVisible")
     ax.press(el)
     try:
         return wait_for(ax, pid, pred, what, timeout=timeout)
