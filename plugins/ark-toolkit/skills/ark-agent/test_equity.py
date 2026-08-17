@@ -25,6 +25,23 @@ class TestMakePoint(unittest.TestCase):
         self.assertEqual(p["date"], "2026-08-10")
 
 
+class TestTradableCash(unittest.TestCase):
+    def test_未入帳的應收付要計入(self):
+        """2026-08-12 實測：大額賣出款 T+2 才入帳，只看已交割餘額會造出假回撤"""
+        self.assertEqual(equity.tradable_cash(15633.0, 79674.0, 0.0), 95307.0)
+
+    def test_交割日不重複計算今日交割款(self):
+        """2026-08-13 實測回歸：79,674 已入帳成 balance，t 欄那筆同款不得再加，
+        否則淨值灌成 278,515，幽靈峰值永久鎖死熔斷"""
+        self.assertEqual(equity.tradable_cash(95307.0, -1051.0, 0.0), 94256.0)
+
+    def test_應收付為負時扣減(self):
+        self.assertEqual(equity.tradable_cash(94283.0, -997.0, 0.0), 93286.0)
+
+    def test_無應收付時等於餘額(self):
+        self.assertEqual(equity.tradable_cash(94283.0, 0.0, 0.0), 94283.0)
+
+
 class TestPeak(unittest.TestCase):
     def test_取歷史最大(self):
         self.assertEqual(equity.peak(FALLEN), 202000.0)
