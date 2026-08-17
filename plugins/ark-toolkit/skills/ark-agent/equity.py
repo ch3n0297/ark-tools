@@ -33,6 +33,20 @@ def make_point(date, stock_value, cash, satellite_value):
             "cash": cash, "satellite": satellite_value}
 
 
+def tradable_cash(balance, t1, t2):
+    """已交割餘額 ＋ **尚未**入帳的應收付（T+1、T+2）。
+
+    只看已交割餘額會在大額調節日出現假回撤（2026-08-11 實測 −40%），所以應收付
+    要計入；但**今日交割款（t）不能加**——它在交割日當天就已經進了 acc_balance，
+    再加一次就是同一筆錢算兩次。2026-08-13 實測：餘額由 15,633 跳到 95,307
+    （恰為 t1 的 79,674 入帳），而該筆仍列在 t 欄，於是淨值被灌成 278,515，
+    造出永久鎖死熔斷的幽靈峰值。**呼叫端不要把 t_money 併進任何一個參數。**
+
+    前提是本函式在交割完成後才被呼叫——盤後結算（14:30）成立。
+    """
+    return balance + t1 + t2
+
+
 def peak(points, key="total"):
     """歷史峰值；無資料回 None。"""
     return max((p[key] for p in points), default=None)
@@ -104,12 +118,11 @@ def main():
                               "last_price": float(p.last_price), "pnl": float(p.pnl)}
                      for p in rows}
         balance = float(api.account_balance().acc_balance)
-        # 未交割應收付必須計入現金：大額調節日的賣出款 T+2 才入帳，只看
-        # 已交割餘額會出現假回撤（2026-08-11 實測 −40%），把熔斷誤觸成 L2。
         s = api.list_settlements(api.stock_account)
-        pending = float(s.t_money) + float(s.t1_money) + float(s.t2_money)
+        t1, t2 = float(s.t1_money), float(s.t2_money)
 
-    cash = balance + pending
+    cash = tradable_cash(balance, t1, t2)
+    pending = t1 + t2
     resolved = tracks.resolve(tracks.load(), positions,
                               risk.DEFAULTS["min_trade_value"])
     stock = sum(r["value"] for r in resolved.values())
