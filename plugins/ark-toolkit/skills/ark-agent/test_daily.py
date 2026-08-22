@@ -138,5 +138,13 @@ class TestSettleOutcome(unittest.TestCase):
             ["對回", "同步"])
 
 
+class TestUnattendedSync(unittest.TestCase):
+    def test_排程呼叫_sync_一定帶_no_prompt(self):
+        """launchd 跑結算時沒人按視窗：config 缺均價口徑若開視窗詢問，整條流程會卡死"""
+        self.assertIn("--no-prompt", daily.SYNC_ARGS)
+        self.assertIn("--allow-delete", daily.SYNC_ARGS)
+        self.assertIn("--with-cash", daily.SYNC_ARGS)
+
+
 if __name__ == "__main__":
     unittest.main()

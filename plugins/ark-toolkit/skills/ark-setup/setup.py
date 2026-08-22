@@ -122,6 +122,11 @@ def summarize(accounts):
         for a in accounts)
 
 
+def apply_cost_basis(cfg, picked):
+    """視窗的口徑選擇套回設定；取消（None）就維持原狀。"""
+    return cfg if picked is None else {**cfg, "cost_basis": picked}
+
+
 def run_wizard():
     try:
         cfg = source.load_config()
@@ -157,6 +162,10 @@ def run_wizard():
             ) != "確定":
                 continue
             new_cfg = {**cfg, "version": 2, "accounts": accounts}
+            if source.has_shioaji(new_cfg):
+                # 口徑只對 Shioaji 有意義（檔案帳戶只有一欄均價）。第一次 sync 也會問，
+                # 這裡是「之後想改」的入口
+                new_cfg = apply_cost_basis(new_cfg, dialogs.ask_cost_basis(source.cost_basis(new_cfg)))
             path = source.save_config(new_cfg)
             print(f"✓ 設定完成：{source.describe(new_cfg)}（{path}）", flush=True)
             return 0

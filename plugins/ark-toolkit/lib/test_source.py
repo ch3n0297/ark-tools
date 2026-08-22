@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 
 import source
 
@@ -376,6 +377,141 @@ class TestReadPositions(unittest.TestCase):
             {"type": "file", "name": "國泰", "path": "/不存在/p.csv", "columns": COLUMNS}]}
         with self.assertRaisesRegex(RuntimeError, "國泰"):
             source.read_positions(cfg)
+
+
+# 2026-08-22 實測永豐帳戶 00911 的三筆零股分錄（list_position_detail）：
+# `price` 欄是該筆總金額不是單價、零股的 `quantity` 一律回 0。
+LOT_00911 = [SimpleNamespace(price=264.0, fee=1.0, ex_dividends=18),
+             SimpleNamespace(price=279.0, fee=1.0, ex_dividends=18),
+             SimpleNamespace(price=289.0, fee=1.0, ex_dividends=17)]
+RAW_00911 = (15, 55.47)           # list_positions 給的 (股數, 均價)
+TOTALS_00911 = (832.0, 3.0, 53.0)  # Σ金額, Σ手續費, Σ已領股息
+
+NO_ADJ = {"include_dividends": False, "include_fees": False}
+FEES = {"include_dividends": False, "include_fees": True}
+DIVS = {"include_dividends": True, "include_fees": False}
+BOTH = {"include_dividends": True, "include_fees": True}
+
+
+class TestCostBasisConfig(unittest.TestCase):
+    def test_缺欄位等於券商原值(self):
+        self.assertEqual(source.cost_basis({"version": 2, "accounts": []}), NO_ADJ)
+
+    def test_只給一個旗標時另一個補_False(self):
+        cfg = {"version": 2, "accounts": [], "cost_basis": {"include_fees": True}}
+        self.assertEqual(source.cost_basis(cfg), FEES)
+
+    def test_口徑人話(self):
+        self.assertEqual(source.describe_cost_basis(NO_ADJ), "不含息、不含手續費")
+        self.assertEqual(source.describe_cost_basis(FEES), "不含息、含手續費")
+        self.assertEqual(source.describe_cost_basis(DIVS), "含息、不含手續費")
+        self.assertEqual(source.describe_cost_basis(BOTH), "含息、含手續費")
+
+    def test_描述含_Shioaji_帳戶時附上口徑(self):
+        cfg = {"version": 2, "accounts": [{"type": "shioaji", "name": "永豐"}],
+               "cost_basis": FEES}
+        self.assertEqual(source.describe(cfg), "永豐（Shioaji）｜均價口徑：不含息、含手續費")
+
+    def test_描述只有檔案帳戶時不附口徑(self):
+        cfg = {"version": 2, "accounts": [
+            {"type": "file", "name": "國泰", "path": "x.csv", "columns": COLUMNS}],
+            "cost_basis": FEES}
+        self.assertEqual(source.describe(cfg), "國泰（檔案）")
+
+
+class TestLotTotals(unittest.TestCase):
+    def test_加總金額_手續費_已領股息(self):
+        self.assertEqual(source.lot_totals(LOT_00911), TOTALS_00911)
+
+    def test_沒有分錄時全零(self):
+        self.assertEqual(source.lot_totals([]), (0.0, 0.0, 0.0))
+
+
+class TestAdjustPrice(unittest.TestCase):
+    def adjust(self, basis):
+        return source.adjust_price("00911", *RAW_00911, TOTALS_00911, basis)
+
+    def test_不含息不含費等於券商均價(self):
+        self.assertEqual(self.adjust(NO_ADJ), 55.47)
+
+    def test_含手續費(self):
+        self.assertEqual(self.adjust(FEES), 55.67)
+
+    def test_含息(self):
+        self.assertEqual(self.adjust(DIVS), 51.93)
+
+    def test_含息含手續費(self):
+        self.assertEqual(self.adjust(BOTH), 52.13)
+
+    def test_分錄金額與券商均價對不上時指名代號報錯(self):
+        """整張持倉的分錄語意未驗證；對不上寧可中止也不把錯值寫進 ARK"""
+        with self.assertRaisesRegex(RuntimeError, "00911"):
+            source.adjust_price("00911", 15, 55.47, (900.0, 3.0, 53.0), FEES)
+
+
+class FakePosition(SimpleNamespace):
+    pass
+
+
+class FakeApi:
+    """只模擬 read_shioaji_positions 會碰到的兩個方法。"""
+    def __init__(self, positions, details):
+        self.stock_account = "ACC"
+        self._positions = positions
+        self._details = details
+        self.detail_calls = []
+
+    def list_positions(self, account, unit=None):
+        return self._positions
+
+    def list_position_detail(self, account, detail_id=0):
+        self.detail_calls.append(detail_id)
+        return self._details[detail_id]
+
+
+class TestReadShioajiPositions(unittest.TestCase):
+    def setUp(self):
+        self.api = FakeApi(
+            [FakePosition(id=4, code="00911", quantity=15, price=55.47)],
+            {4: LOT_00911})
+
+    def test_券商原值口徑不查分錄(self):
+        got = source.read_shioaji_positions(self.api, NO_ADJ)
+        self.assertEqual(got, {"00911": (15, 55.47)})
+        self.assertEqual(self.api.detail_calls, [])
+
+    def test_未指定口徑等同券商原值(self):
+        self.assertEqual(source.read_shioaji_positions(self.api), {"00911": (15, 55.47)})
+        self.assertEqual(self.api.detail_calls, [])
+
+    def test_含費口徑以持倉_id_查分錄後換算(self):
+        got = source.read_shioaji_positions(self.api, FEES)
+        self.assertEqual(got, {"00911": (15, 55.67)})
+        self.assertEqual(self.api.detail_calls, [4])
+
+
+class TestReadPositionsCostBasis(unittest.TestCase):
+    def test_config_的口徑傳給_Shioaji_讀取(self):
+        seen = []
+        original = source.read_shioaji_positions
+        source.read_shioaji_positions = lambda api=None, cost_basis=None: (
+            seen.append(cost_basis) or {"2330": (18, 2282.61)})
+        try:
+            cfg = {"version": 2, "accounts": [{"type": "shioaji", "name": "永豐"}],
+                   "cost_basis": BOTH}
+            self.assertEqual(source.read_positions(cfg), {"2330": (18, 2282.61)})
+        finally:
+            source.read_shioaji_positions = original
+        self.assertEqual(seen, [BOTH])
+
+    def test_檔案帳戶不受口徑影響(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = write_csv(d, CSV_TEXT)
+            cfg = {"version": 2, "accounts": [
+                {"type": "file", "name": "國泰", "path": path, "columns": COLUMNS}],
+                "cost_basis": BOTH}
+            self.assertEqual(source.read_positions(cfg),
+                             {"2330": (50, 2062.38), "0050": (17, 96.76)})
 
 
 if __name__ == "__main__":

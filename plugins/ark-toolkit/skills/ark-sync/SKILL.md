@@ -55,9 +55,37 @@ uv run skills/ark-sync/sync.py --dry-run        # 只顯示差異，不寫入
 uv run skills/ark-sync/sync.py                  # 執行（略過刪除）
 uv run skills/ark-sync/sync.py --allow-delete   # 含刪除
 uv run skills/ark-sync/sync.py --allow-delete --force   # 略過安全閘
+uv run skills/ark-sync/sync.py --no-prompt      # 排程用：缺均價口徑時不開視窗
 ```
 
 刪除預設略過，需明確加旗標。執行後再跑一次 `--dry-run` 確認結果。
+
+## 均價口徑：第一次問一次，之後沿用
+
+券商 API（`list_positions`）給的均價是**不含息、不含手續費**的純買進均價。
+要把已領現金股利扣掉、或把買進手續費加進成本，得從每筆買進分錄
+（`list_position_detail`）加總換算——四種口徑：
+
+| `cost_basis` | 均價 = | 意義 |
+|---|---|---|
+| 不含息、不含手續費（預設） | 券商原值 | 與券商 App 庫存頁一致 |
+| 不含息、含手續費 | (Σ金額 ＋ Σ手續費) ÷ 股數 | 實際付出的錢 |
+| 含息、不含手續費 | (Σ金額 － Σ已領股息) ÷ 股數 | 股息視為成本回收 |
+| 含息、含手續費 | (Σ金額 ＋ 手續費 － 已領股息) ÷ 股數 | 最接近真實投入 |
+
+這是使用者的投資觀點，工具不代選：**有 Shioaji 帳戶且 `config.json` 還沒有
+`cost_basis` 時，sync 啟動會開原生視窗問一次**，選了就寫進 config、之後永久沿用；
+按取消則本次用券商原值、不存、下次再問。之後想改，跑 `ark-setup` 按「完成」時會再問。
+`--no-prompt`（排程 `daily.py` 一律帶）下缺設定不問，直接用券商原值。
+
+口徑只影響 `source.read_positions()` 這條路（ark-sync／ark-collect／ark-analyze），
+ark-agent 的 equity／journal／packet 仍用券商原值——journal 靠「均價 diff」反推
+買進成交價，均價若含息，除息日就會反推出錯的價格。
+
+**換算前必驗算** Σ分錄金額 ÷ 股數 ≈ 券商均價（容差 0.01），對不上就指名代號中止，
+不寫進 ARK。原因：分錄的 `price` 欄實測是**該筆總金額**不是單價、零股 `quantity`
+回 0（2026-08-22 實測，全為零股樣本），整張持倉的語意沒驗證過——寧可中止也不寫錯值。
+檔案帳戶只有一欄均價，口徑對它無效，`describe()` 只在有 Shioaji 時附上口徑。
 
 `ark-analyze` 對帳不一致時會自動呼叫本工具（含 `--allow-delete`），使用者不需手動執行。
 
@@ -78,7 +106,7 @@ uv run skills/ark-sync/sync.py --allow-delete --force   # 略過安全閘
 ## 同步紀錄
 
 每次實際執行（非 dry-run）會在 `~/.ark-toolkit/sync-log.jsonl` 追加一行：
-時間、同步前後的 ARK 檔數、來源檔數、套用了哪些動作、成功／失敗數。
+時間、同步前後的 ARK 檔數、來源檔數、套用了哪些動作、成功／失敗數、均價口徑。
 收尾的檔數取自 App 自己宣告的「總共 N 檔」，不是推算的。
 
 `ark.drift_since_last_sync` 拿最後一筆與當下的 ARK 檔數比對，

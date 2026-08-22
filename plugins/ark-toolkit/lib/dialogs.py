@@ -62,6 +62,20 @@ def notify(message):
     ask_buttons(message, ["好"])
 
 
+def ask_cost_basis(current=None):
+    """讓使用者選 ARK 均價口徑（四選一）；取消回 None。
+
+    選項不涉機密，但仍走原生視窗：口徑是使用者的投資觀點，不該由 AI 助理代選。
+    """
+    labels = [source.describe_cost_basis(b) for b in source.COST_BASIS_CHOICES]
+    now = source.describe_cost_basis(current) if current else None
+    picked = choose_from_list(
+        "方舟運算的成本均價要用哪種口徑？\n"
+        "（含息＝扣掉已領現金股利；含手續費＝加上買進手續費）"
+        + (f"\n目前：{now}" if now else ""), labels)
+    return None if picked is None else source.COST_BASIS_CHOICES[labels.index(picked)]
+
+
 def pick_columns(path):
     """表頭自動對應，認不出的欄位以下拉選單詢問；使用者取消回傳 None。"""
     headers = source.sniff_headers(path)

@@ -3,6 +3,29 @@
 本檔記錄 ark-toolkit 的版本沿革。版本語意：主版號＝正式里程碑，
 次版號＝行為或語意變更，修訂號＝bug 修正。
 
+## [1.3.0] - 2026-08-22
+
+- **ARK 均價口徑可選（含息／不含息 × 含手續費／不含手續費）**。券商 API 的
+  `list_positions().price` 實測是**不含息、不含手續費**的純買進均價，1.2.1 以前
+  ARK 的均價就是它的鏡像，已領股息從不反映在成本上。現在 `source.read_shioaji_positions`
+  可依 `config.json` 的 `cost_basis` 從每筆買進分錄（`list_position_detail`）加總
+  換算：(Σ金額 ± 手續費 ∓ 已領股息) ÷ 股數。**口徑是使用者的投資觀點，工具不代選**：
+  有 Shioaji 帳戶且 config 還沒有 `cost_basis` 時，`ark-sync` 第一次啟動開原生視窗
+  問一次、寫進 config 後永久沿用；`ark-setup` 按「完成」時可改。缺欄位＝券商原值，
+  舊設定不必遷移、輸出逐位元與 1.2.1 相同
+- **API 實測發現（設計依據）**：分錄的 `price` 欄是**該筆總金額**不是單價、零股的
+  `quantity` 一律回 0（單位是張）；00911 三筆分錄各自帶 `ex_dividends`，券商是
+  按分錄記股息，所以不能拿除權息表 × 持股數去推。整張持倉的分錄語意沒有樣本，
+  換算前一律驗算 Σ分錄金額 ÷ 股數 ≈ 券商均價（容差 0.01），對不上指名代號中止——
+  與 `check_parsed` 驗總成本同一哲學，寧可中止也不把錯值寫進 ARK
+- **口徑只影響 `read_positions()` 這條路**（ark-sync／ark-collect／ark-analyze）。
+  ark-agent 的 equity／journal／packet 仍用券商原值：journal 靠「均價 diff」反推
+  買進成交價，均價若含息，除息日就會反推出錯的價格
+- **排程一律 `--no-prompt`**：`daily.py` 呼叫 sync 的參數抽成 `SYNC_ARGS`，缺設定時
+  不開視窗、沿用券商原值——無人值守沒人按視窗，問了只會卡死結算
+- `sync-log.jsonl` 每筆多記 `cost_basis`；`source.describe()` 在有 Shioaji 時附上口徑
+- 新增 `skills/ark-setup/test_setup.py`
+
 ## [1.2.1] - 2026-08-17
 
 - **修：交割日重複計算今日交割款，造出永久鎖死熔斷的幽靈峰值**。`equity.py`
