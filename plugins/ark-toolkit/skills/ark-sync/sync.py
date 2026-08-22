@@ -63,27 +63,6 @@ def plan_changes(current, target):
 MAX_DELETE_RATIO = 0.5
 
 
-def ensure_cost_basis(cfg, prompt, ask=dialogs.ask_cost_basis, save=source.save_config):
-    """第一次 sync 問一次均價口徑、寫進 config，之後永久沿用。
-
-    只在「有 Shioaji 帳戶、config 還沒有口徑、允許開視窗」三者同時成立才問：
-    檔案帳戶無從換算；排程（daily.py 的 --no-prompt）沒人按視窗，問了只會卡住。
-    按取消這次用券商原值且不存——下次仍會問，直到使用者做出選擇。
-    """
-    if "cost_basis" in cfg or not prompt or not source.has_shioaji(cfg):
-        return cfg
-    picked = ask()
-    if picked is None:
-        print("  未選擇均價口徑，本次用券商原值（不含息、不含手續費）；下次仍會詢問",
-              flush=True)
-        return cfg
-    new_cfg = {**cfg, "cost_basis": picked}
-    save(new_cfg)
-    print(f"  均價口徑已記住：{source.describe_cost_basis(picked)}（之後可用 ark-setup 變更）",
-          flush=True)
-    return new_cfg
-
-
 def log_entry(current, target, applied, ok, fail, after, cfg, now):
     """sync-log 一筆。`after` 是 App 自己宣告的收尾檔數，讀不到就不寫——別拿推算的充數。"""
     entry = {
@@ -363,7 +342,7 @@ def main():
         print("⚠️  目前為純 ARK 模式（不對帳）。ark-sync 需要真實持倉來源，"
               "請執行 ark-setup 變更設定。")
         return 2
-    cfg = ensure_cost_basis(cfg, prompt=not args.no_prompt)
+    cfg = dialogs.ensure_cost_basis(cfg, prompt=not args.no_prompt)
     if source.needs_staging(cfg):
         # 有檔案帳戶：只吃 ark-collect 確認過的當日快照——確認過的才是實際套用的
         try:

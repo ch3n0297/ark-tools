@@ -74,11 +74,13 @@ uv run skills/ark-sync/sync.py --no-prompt      # 排程用：缺均價口徑時
 | 含息、含手續費 | (Σ金額 ＋ 手續費 － 已領股息) ÷ 股數 | 最接近真實投入 |
 
 這是使用者的投資觀點，工具不代選：**有 Shioaji 帳戶且 `config.json` 還沒有
-`cost_basis` 時，sync 啟動會開原生視窗問一次**，選了就寫進 config、之後永久沿用；
-按取消則本次用券商原值、不存、下次再問。之後想改，跑 `ark-setup` 按「完成」時會再問。
-`--no-prompt`（排程 `daily.py` 一律帶）下缺設定不問，直接用券商原值。
+`cost_basis` 時，sync（單帳戶）或 collect（多帳戶）啟動會開原生視窗問一次**，選了就
+寫進 config、之後永久沿用；按取消則本次用券商原值、不存、下次再問。之後想改，跑
+`ark-setup` 按「完成」時會再問。`--no-prompt`（排程 `daily.py` 一律帶）下缺設定不問，
+直接用券商原值。
 
-口徑只影響 `source.read_positions()` 這條路（ark-sync／ark-collect／ark-analyze），
+口徑套用在 `source.read_account_positions(account, basis)`（`basis` 必填，漏傳會當場
+報錯而非靜默退回原值）——ark-sync／ark-collect／ark-read／ark-analyze 四條路都經過它。
 ark-agent 的 equity／journal／packet 仍用券商原值——journal 靠「均價 diff」反推
 買進成交價，均價若含息，除息日就會反推出錯的價格。
 

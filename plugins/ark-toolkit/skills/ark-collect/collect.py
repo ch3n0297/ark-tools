@@ -71,6 +71,36 @@ def collect_file_account(account):
             acc["columns"] = columns
 
 
+def read_accounts(cfg, read_shioaji=source.read_account_positions,
+                  read_file=collect_file_account):
+    """逐帳戶讀持倉；Shioaji 帳戶帶 config 的均價口徑（1.3.0 漏了這個，快照永遠是原值）。
+
+    回傳 (帳戶→持倉, 可能更新過路徑／欄位的帳戶清單)；使用者在檔案救援視窗取消
+    回 (None, None)；Shioaji 讀取失敗拋 RuntimeError 並指名帳戶。
+    """
+    basis = source.cost_basis(cfg)
+    by_account, accounts = {}, []
+    for account in cfg["accounts"]:
+        name = account["name"]
+        if account["type"] == "shioaji":
+            print(f"讀取「{name}」（Shioaji API，均價口徑：{source.describe_cost_basis(basis)}）…",
+                  flush=True)
+            try:
+                by_account[name] = read_shioaji(account, basis)
+            except Exception as e:
+                raise RuntimeError(f"帳戶「{name}」讀取失敗（{type(e).__name__}）：{e}") from e
+            accounts.append(account)
+        else:
+            print(f"讀取「{name}」（檔案）…", flush=True)
+            positions, acc = read_file(account)
+            if positions is None:
+                return None, None
+            by_account[name] = positions
+            accounts.append(acc)
+        print(f"  {len(by_account[name])} 檔", flush=True)
+    return by_account, accounts
+
+
 def main():
     ark.check_platform(tool="ark-collect")
     try:
@@ -82,26 +112,16 @@ def main():
         print("⚠️  目前為純 ARK 模式（無任何帳戶）。請執行 ark-setup 新增帳戶。")
         return 2
 
-    by_account, accounts = {}, []
-    for account in cfg["accounts"]:
-        name = account["name"]
-        if account["type"] == "shioaji":
-            print(f"讀取「{name}」（Shioaji API）…", flush=True)
-            try:
-                by_account[name] = source.read_account_positions(account)
-            except Exception as e:
-                print(f"✗ 帳戶「{name}」讀取失敗（{type(e).__name__}）：{e}")
-                return 1
-            accounts.append(account)
-        else:
-            print(f"讀取「{name}」（檔案）…", flush=True)
-            positions, acc = collect_file_account(account)
-            if positions is None:
-                print("已取消，未寫入快照", flush=True)
-                return 1
-            by_account[name] = positions
-            accounts.append(acc)
-        print(f"  {len(by_account[name])} 檔", flush=True)
+    # 多帳戶的資料在這一步就定案（sync 只讀快照），口徑要在這裡問、在這裡套用
+    cfg = dialogs.ensure_cost_basis(cfg, prompt=True)
+    try:
+        by_account, accounts = read_accounts(cfg)
+    except RuntimeError as e:
+        print(f"✗ {e}")
+        return 1
+    if by_account is None:
+        print("已取消，未寫入快照", flush=True)
+        return 1
 
     merged = source.merge_positions(by_account)
     print()
