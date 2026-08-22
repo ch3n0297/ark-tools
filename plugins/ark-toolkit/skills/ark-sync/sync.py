@@ -25,8 +25,9 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.abspath(os.path.join(HERE, "..", "..", "lib")))
 
-import ark     # noqa: E402
-import source  # noqa: E402
+import ark      # noqa: E402
+import dialogs  # noqa: E402
+import source   # noqa: E402
 
 UnsupportedPlatform = ark.UnsupportedPlatform
 ParseFailed = ark.ParseFailed
@@ -60,6 +61,42 @@ def plan_changes(current, target):
 
 
 MAX_DELETE_RATIO = 0.5
+
+
+def ensure_cost_basis(cfg, prompt, ask=dialogs.ask_cost_basis, save=source.save_config):
+    """第一次 sync 問一次均價口徑、寫進 config，之後永久沿用。
+
+    只在「有 Shioaji 帳戶、config 還沒有口徑、允許開視窗」三者同時成立才問：
+    檔案帳戶無從換算；排程（daily.py 的 --no-prompt）沒人按視窗，問了只會卡住。
+    按取消這次用券商原值且不存——下次仍會問，直到使用者做出選擇。
+    """
+    if "cost_basis" in cfg or not prompt or not source.has_shioaji(cfg):
+        return cfg
+    picked = ask()
+    if picked is None:
+        print("  未選擇均價口徑，本次用券商原值（不含息、不含手續費）；下次仍會詢問",
+              flush=True)
+        return cfg
+    new_cfg = {**cfg, "cost_basis": picked}
+    save(new_cfg)
+    print(f"  均價口徑已記住：{source.describe_cost_basis(picked)}（之後可用 ark-setup 變更）",
+          flush=True)
+    return new_cfg
+
+
+def log_entry(current, target, applied, ok, fail, after, cfg, now):
+    """sync-log 一筆。`after` 是 App 自己宣告的收尾檔數，讀不到就不寫——別拿推算的充數。"""
+    entry = {
+        "ts": now,
+        "ark_count_before": len(current),
+        "shioaji_count": len(target),
+        "applied": applied,               # 只記實際成功的動作，失敗的看 fail
+        "ok": ok, "fail": fail,
+        "cost_basis": source.describe_cost_basis(source.cost_basis(cfg)),
+    }
+    if after is not None:
+        entry["ark_count"] = after
+    return entry
 
 
 def sync_is_safe(current, target, max_delete_ratio=MAX_DELETE_RATIO, allow_delete=True):
@@ -312,6 +349,8 @@ def main():
     ap.add_argument("--with-cash", action="store_true",
                     help="一併把運算頁的台幣現金欄同步成券商可動用資金"
                          "（＋config.json 的 external_cash）")
+    ap.add_argument("--no-prompt", action="store_true",
+                    help="無人值守（排程）：config 缺均價口徑時不開視窗詢問，沿用券商原值")
     args = ap.parse_args()
 
     check_platform()
@@ -324,6 +363,7 @@ def main():
         print("⚠️  目前為純 ARK 模式（不對帳）。ark-sync 需要真實持倉來源，"
               "請執行 ark-setup 變更設定。")
         return 2
+    cfg = ensure_cost_basis(cfg, prompt=not args.no_prompt)
     if source.needs_staging(cfg):
         # 有檔案帳戶：只吃 ark-collect 確認過的當日快照——確認過的才是實際套用的
         try:
@@ -410,16 +450,8 @@ def main():
     fail = len(todo)
 
     after = ark.read_declared_count(ax, pid)     # 用 App 自己宣告的檔數收尾，不用推算的
-    entry = {
-        "ts": dt.datetime.now().replace(microsecond=0).isoformat(),
-        "ark_count_before": len(current),
-        "shioaji_count": len(target),
-        "applied": applied,               # 只記實際成功的動作，失敗的看 fail
-        "ok": ok, "fail": fail,
-    }
-    if after is not None:                 # 讀不到就不寫，別拿執行前的檔數充數
-        entry["ark_count"] = after
-    ark.append_sync_log(entry)
+    ark.append_sync_log(log_entry(current, target, applied, ok, fail, after, cfg,
+                                  dt.datetime.now().replace(microsecond=0).isoformat()))
 
     print(f"\n完成 {ok} 項，失敗 {fail} 項")
     if args.with_cash and not sync_cash(ax, pid, cfg):

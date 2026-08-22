@@ -20,6 +20,16 @@ STAGING_PATH = os.path.expanduser("~/.ark-toolkit/staging.json")
 
 ACCOUNT_TYPES = ("shioaji", "file")
 
+# ARK 均價口徑（config.json 的 cost_basis）。缺欄位＝券商原值，舊設定不必遷移。
+# 買進端沒有交易稅，「含稅」實際上就是手續費；股息是已領的現金股利（分錄的 ex_dividends）。
+COST_BASIS_DEFAULT = {"include_dividends": False, "include_fees": False}
+COST_BASIS_CHOICES = ({"include_dividends": False, "include_fees": False},
+                      {"include_dividends": False, "include_fees": True},
+                      {"include_dividends": True, "include_fees": False},
+                      {"include_dividends": True, "include_fees": True})
+# 「Σ分錄金額 ÷ 股數」與券商均價的容差：兩者各自四捨五入到分，差距必小於 0.01
+LOT_CHECK_TOL = 0.01
+
 # 常見券商匯出表頭 → 欄位自動對應（比對時忽略前後空白與大小寫）
 CODE_HEADERS = ("股票代號", "證券代號", "商品代號", "股票代碼", "代號", "代碼", "code", "symbol")
 QTY_HEADERS = ("庫存股數", "持有股數", "股數", "數量", "qty", "quantity", "shares")
@@ -215,10 +225,10 @@ def merge_positions(by_account):
     return {code: (q, cost / q) for code, (q, cost) in totals.items() if q}
 
 
-def read_account_positions(account):
+def read_account_positions(account, basis=None):
     """讀單一帳戶的即時持倉。錯誤一律指名帳戶——多帳戶時才知道是誰壞了。"""
     if account["type"] == "shioaji":
-        return read_shioaji_positions()
+        return read_shioaji_positions(cost_basis=basis)
     path = os.path.expanduser(account["path"])
     if not os.path.exists(path):
         raise RuntimeError(f"帳戶「{account['name']}」找不到檔案：{path}。"
@@ -239,16 +249,39 @@ def read_positions(config=None, config_path=CONFIG_PATH):
     accounts = cfg["accounts"]
     if not accounts:
         return None
-    return merge_positions({a["name"]: read_account_positions(a) for a in accounts})
+    basis = cost_basis(cfg)
+    return merge_positions({a["name"]: read_account_positions(a, basis) for a in accounts})
+
+
+def cost_basis(config):
+    """config 的均價口徑；缺欄位或缺旗標一律補成券商原值（False）。"""
+    return {**COST_BASIS_DEFAULT, **(config.get("cost_basis") or {})}
+
+
+def describe_cost_basis(basis):
+    return ("含息" if basis["include_dividends"] else "不含息") + "、" + \
+           ("含手續費" if basis["include_fees"] else "不含手續費")
+
+
+def has_shioaji(config):
+    return any(a["type"] == "shioaji" for a in config.get("accounts", []))
 
 
 def describe(config):
-    """來源的簡短人話描述，供輸出訊息使用。"""
-    accounts = migrate_config(config)["accounts"]
+    """來源的簡短人話描述，供輸出訊息使用。
+
+    口徑只對 Shioaji 帳戶有意義（檔案帳戶只有一欄均價，無從換算），
+    所以只在有 Shioaji 時附上，免得檔案帳戶的使用者以為口徑有套用。
+    """
+    cfg = migrate_config(config)
+    accounts = cfg["accounts"]
     if not accounts:
         return "純 ARK 模式（不對帳）"
     kind = {"shioaji": "Shioaji", "file": "檔案"}
-    return "＋".join(f"{a['name']}（{kind[a['type']]}）" for a in accounts)
+    text = "＋".join(f"{a['name']}（{kind[a['type']]}）" for a in accounts)
+    if has_shioaji(cfg):
+        text += f"｜均價口徑：{describe_cost_basis(cost_basis(cfg))}"
+    return text
 
 
 # ---------------------------------------------------------------- 收集快照
@@ -311,18 +344,58 @@ def load_credentials():
         )
 
 
-def read_shioaji_positions(api=None):
-    """回傳 {代號: (股數, 成本均價)}。
+def lot_totals(details):
+    """持倉分錄（list_position_detail）→ (Σ金額, Σ手續費, Σ已領股息)。
+
+    實測（2026-08-22，永豐零股）：分錄的 `price` 是**該筆總金額**不是單價，
+    `quantity` 對零股一律回 0——所以這裡只加總金額，股數要用 list_positions 的。
+    """
+    return (float(sum(d.price for d in details)),
+            float(sum(d.fee for d in details)),
+            float(sum(d.ex_dividends for d in details)))
+
+
+def adjust_price(code, qty, raw_price, totals, basis):
+    """依口徑換算均價：(Σ金額 ＋ 手續費? － 已領股息?) ÷ 股數，四捨五入到分。
+
+    先驗算 Σ金額 ÷ 股數 ≈ 券商均價：整張持倉的分錄語意沒有樣本驗證過，
+    對不上代表我們看錯了欄位，寧可中止 sync 也不把錯的數字寫進 ARK
+    （與 check_parsed 驗總成本同一哲學——失敗不能偽裝成成功）。
+    """
+    if not basis["include_dividends"] and not basis["include_fees"]:
+        return raw_price
+    amount, fee, dividends = totals
+    if qty <= 0 or abs(amount / qty - raw_price) >= LOT_CHECK_TOL:
+        raise RuntimeError(f"{code} 的分錄金額 {amount:.0f} ÷ {qty} 股與券商均價 {raw_price} "
+                           "對不上，無法換算口徑；請改回券商原值或回報此案例")
+    cost = amount + (fee if basis["include_fees"] else 0.0) \
+                  - (dividends if basis["include_dividends"] else 0.0)
+    return round(cost / qty, 2)
+
+
+def read_shioaji_positions(api=None, cost_basis=None):
+    """回傳 {代號: (股數, 成本均價)}，均價依口徑換算（預設券商原值）。
 
     可傳入現成的 api session（ark-agent 一次要取多種資料）避免重複登入；
-    不傳則維持原行為自行登入。
+    不傳則維持原行為自行登入。券商原值時不查分錄——多一趟 API 沒有意義。
+    只在自行登入時才 import shioaji：給了 api 的路徑（含測試的假 api）
+    不該依賴套件是否安裝；`unit` 用文件明載的字面值 "Share"。
     """
-    import shioaji as sj
-
     if api is None:
+        import shioaji as sj
+
         load_credentials()
         api = sj.Shioaji(simulation=False)
         api.login(api_key=os.environ["SHIOAJI_API_KEY"],
                   secret_key=os.environ["SHIOAJI_SECRET_KEY"])
-    return {p.code: (int(p.quantity), float(p.price))
-            for p in api.list_positions(api.stock_account, unit=sj.Unit.Share)}
+    basis = {**COST_BASIS_DEFAULT, **(cost_basis or {})}
+    adjusting = basis["include_dividends"] or basis["include_fees"]
+    out = {}
+    for p in api.list_positions(api.stock_account, unit="Share"):
+        qty, raw = int(p.quantity), float(p.price)
+        if adjusting:
+            totals = lot_totals(api.list_position_detail(api.stock_account, detail_id=p.id))
+            out[p.code] = (qty, adjust_price(p.code, qty, raw, totals, basis))
+        else:
+            out[p.code] = (qty, raw)
+    return out

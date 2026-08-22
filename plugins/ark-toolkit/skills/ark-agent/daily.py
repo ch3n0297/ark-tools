@@ -37,6 +37,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.expanduser("~/.ark-toolkit/agent")
 LOG = os.path.join(STATE, "daily.log")
 SYNC = os.path.abspath(os.path.join(HERE, "..", "ark-sync", "sync.py"))
+# 無人值守：config 缺均價口徑時 sync 會開視窗詢問，排程沒人按會卡死，一定帶 --no-prompt
+SYNC_ARGS = ("--allow-delete", "--with-cash", "--no-prompt")
 
 PROCEED, SKIP, FAIL = "proceed", "skip", "fail"
 
@@ -263,7 +265,7 @@ def settle(date):
         # 抓、累積存檔，等前瞻報酬到期時資料才在。放在寫 App 之前：純網路取數，
         # 失敗也不影響後面兩步。
         ("除權息資料", run(mode, os.path.join(HERE, "dividends.py"))),
-        ("庫存/現金同步", run(mode, SYNC, "--allow-delete", "--with-cash")),
+        ("庫存/現金同步", run(mode, SYNC, *SYNC_ARGS)),
         ("實現收益記錄", run(mode, os.path.join(HERE, "record_return.py"))),
     ]
     failed = settle_failures(results)

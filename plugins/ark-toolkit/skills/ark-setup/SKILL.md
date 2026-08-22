@@ -54,6 +54,10 @@ uv run skills/ark-setup/setup.py --show    # 只顯示目前設定（不開視�
 | **檔案帳戶**（任意個） | 任何券商（無 API 也可） | 原生選檔（CSV／Excel）→ 自動對應表頭（認不出時下拉選）→ 試讀驗證 → 命名 → 記住路徑與欄位 |
 | **空清單＝純 ARK** | 不對帳 | ark-sync／ark-collect／ark-read 停用；ark-analyze／ark-explore 照常可用 |
 
+按「完成」時若清單含 Shioaji 帳戶，會再問一次 **ARK 均價口徑**（含息／不含息 ×
+含手續費／不含手續費，預選目前值；取消＝不變）。第一次 `ark-sync` 也會問，
+這裡是之後想改的入口；口徑的意義見 ark-sync 的「均價口徑」一節。
+
 設定存於 `~/.ark-toolkit/config.json`（僅非機密）。舊版單一來源格式會在
 載入時自動遷移成帳戶清單，不必重跑精靈。檔案內容更新後不需重跑
 （每次執行時重讀），路徑或欄位變了也可在 ark-collect 執行時當場重選。
