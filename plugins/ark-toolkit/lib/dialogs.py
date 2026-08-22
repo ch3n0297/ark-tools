@@ -88,3 +88,25 @@ def pick_columns(path):
                 return None
             columns[key] = picked
     return columns
+
+
+def ensure_cost_basis(cfg, prompt, ask=None, save=source.save_config):
+    """第一次 sync／collect 問一次均價口徑、寫進 config，之後永久沿用。
+
+    只在「有 Shioaji 帳戶、config 還沒有口徑、允許開視窗」三者同時成立才問：
+    檔案帳戶無從換算；排程（daily.py 的 --no-prompt）沒人按視窗，問了只會卡住。
+    按取消這次用券商原值且不存——下次仍會問，直到使用者做出選擇。
+    多帳戶時資料在 collect 階段就定案，所以 collect 也要問，不能只靠 sync。
+    """
+    if "cost_basis" in cfg or not prompt or not source.has_shioaji(cfg):
+        return cfg
+    picked = (ask or ask_cost_basis)()
+    if picked is None:
+        print("  未選擇均價口徑，本次用券商原值（不含息、不含手續費）；下次仍會詢問",
+              flush=True)
+        return cfg
+    new_cfg = {**cfg, "cost_basis": picked}
+    save(new_cfg)
+    print(f"  均價口徑已記住：{source.describe_cost_basis(picked)}（之後可用 ark-setup 變更）",
+          flush=True)
+    return new_cfg

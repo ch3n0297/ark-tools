@@ -3,6 +3,19 @@
 本檔記錄 ark-toolkit 的版本沿革。版本語意：主版號＝正式里程碑，
 次版號＝行為或語意變更，修訂號＝bug 修正。
 
+## [1.3.1] - 2026-08-22
+
+- **修：`ark-collect`／`ark-read` 沒把均價口徑傳給永豐讀取，快照仍是券商原值**
+  （使用者回報）。1.3.0 把口徑接在 `source.read_positions()`，但 collect 與 read 是
+  逐帳戶呼叫 `read_account_positions(account)`，新參數 `basis` 有 `None` 預設，
+  既有呼叫點就靜默退回原值——多帳戶使用者的 sync 只讀快照，選的口徑從沒生效。
+  現在 `basis` **必填**（漏傳當場報錯），collect／read 都帶 `cost_basis(cfg)`
+- **第一次詢問口徑搬到 collect 也會問**：多帳戶的資料在 collect 階段就定案，
+  只在 sync 問等於問晚了（問完還得再跑一次 collect）。`ensure_cost_basis` 移到
+  `lib/dialogs.py` 供 sync／collect 共用；ark-read 維持不彈視窗，只套用既有設定
+- 更正 1.3.0 文案「口徑影響 collect」的不實陳述；新增 `test_collect.py`、
+  `test_read.py`、`lib/test_dialogs.py`
+
 ## [1.3.0] - 2026-08-22
 
 - **ARK 均價口徑可選（含息／不含息 × 含手續費／不含手續費）**。券商 API 的

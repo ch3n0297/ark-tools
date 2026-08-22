@@ -225,8 +225,12 @@ def merge_positions(by_account):
     return {code: (q, cost / q) for code, (q, cost) in totals.items() if q}
 
 
-def read_account_positions(account, basis=None):
-    """讀單一帳戶的即時持倉。錯誤一律指名帳戶——多帳戶時才知道是誰壞了。"""
+def read_account_positions(account, basis):
+    """讀單一帳戶的即時持倉。錯誤一律指名帳戶——多帳戶時才知道是誰壞了。
+
+    `basis` 刻意不給預設值：1.3.0 給了 `None` 預設，collect 的既有呼叫點就
+    靜默退回券商原值，使用者選的口徑從沒進過快照。必填讓漏傳的呼叫點當場炸。
+    """
     if account["type"] == "shioaji":
         return read_shioaji_positions(cost_basis=basis)
     path = os.path.expanduser(account["path"])

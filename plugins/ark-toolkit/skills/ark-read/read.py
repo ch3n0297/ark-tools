@@ -30,8 +30,13 @@ def table(title, positions):
     return "\n".join(lines)
 
 
-def read_all(cfg):
-    """回傳 (各帳戶持倉, 檔案帳戶的最後修改時間)。任一帳戶失敗即整體失敗。"""
+def read_all(cfg, read=source.read_account_positions):
+    """回傳 (各帳戶持倉, 檔案帳戶的最後修改時間)。任一帳戶失敗即整體失敗。
+
+    Shioaji 帳戶帶 config 的均價口徑——要和 sync 寫進 ARK 的是同一口徑，
+    對照才有意義。本工具不彈視窗，所以只套用既有設定、缺設定就是券商原值。
+    """
+    basis = source.cost_basis(cfg)
     by_account, mtimes = {}, {}
     for account in cfg["accounts"]:
         if account["type"] == "file":
@@ -39,7 +44,7 @@ def read_all(cfg):
             if os.path.exists(path):
                 mtimes[account["name"]] = dt.datetime.fromtimestamp(
                     os.path.getmtime(path)).replace(microsecond=0).isoformat()
-        by_account[account["name"]] = source.read_account_positions(account)
+        by_account[account["name"]] = read(account, basis)
     return by_account, mtimes
 
 

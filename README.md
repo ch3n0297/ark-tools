@@ -83,7 +83,9 @@ uv run plugins/ark-toolkit/skills/ark-explore/run.py --show      # 看功能地�
 純邏輯測試不需要 ARK 執行中，任何平台皆可跑：
 
 ```bash
-cd plugins/ark-toolkit/lib                && uv run --no-project --python 3.13 --with openpyxl python -m unittest test_source
+cd plugins/ark-toolkit/lib                && uv run --no-project --python 3.13 --with openpyxl python -m unittest test_source test_dialogs
+cd plugins/ark-toolkit/skills/ark-collect && PYTHONPATH=../../lib uv run --no-project --python 3.13 --with openpyxl --with python-dotenv python -m unittest test_collect
+cd plugins/ark-toolkit/skills/ark-read    && PYTHONPATH=../../lib uv run --no-project --python 3.13 --with openpyxl --with python-dotenv python -m unittest test_read
 cd plugins/ark-toolkit/skills/ark-sync    && PYTHONPATH=../../lib uv run --no-project --python 3.13 python -m unittest test_sync
 cd plugins/ark-toolkit/skills/ark-analyze && PYTHONPATH=../../lib uv run --no-project --python 3.13 python -m unittest test_analyze
 cd plugins/ark-toolkit/skills/ark-explore && PYTHONPATH=../../lib uv run --no-project --python 3.13 python -m unittest test_explore
