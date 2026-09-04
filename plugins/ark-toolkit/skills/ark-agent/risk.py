@@ -290,11 +290,15 @@ def build_envelope(packet, assigned, equity_points, satellite_exits, calendar,
             tracks.FROZEN: agg[tracks.FROZEN],
         },
         "core": {
-            "max_names": max_names_with_hysteresis(
-                effective_max_names, max_names_history,
-                config["max_names_hysteresis_days"]),
+            # 下限是使用者設定、不是總資源震盪，套在遲滯之後才不會被壓回公式值
+            "max_names": max(packet["discipline"].get("names_floor", 1),
+                             max_names_with_hysteresis(
+                                 effective_max_names, max_names_history,
+                                 config["max_names_hysteresis_days"])),
             # 留下公式原值：遲滯要比對歷次原值，不留就沒得比
             "raw_max_names": max_names_history[-1] if max_names_history else None,
+            # hard：journal 依 max_names 拒單；advisory：只是參考值，決策層自行判斷檔數
+            "names_cap": packet["discipline"].get("names_cap", "hard"),
             "concentration_cap": config["core_concentration_cap"],
             "breaches": concentration_breaches(resolved, total,
                                                config["core_concentration_cap"]),

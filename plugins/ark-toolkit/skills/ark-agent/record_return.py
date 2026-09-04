@@ -80,7 +80,7 @@ def main():
         print(f"（dry-run）{date} 將記錄已實現獲利 {amount:,.0f} 元")
         return 0
 
-    pid = ark.ensure_responsive(ax, ax.activate())
+    pid = ark.ensure_responsive(ax, ax.ensure_ready())   # 不搶焦點
     written = ark.record_daily_return(ax, pid, amount, date=date)
     print(f"{'✅' if written else '🛑'} {date} 已實現獲利 {amount:,.0f} 元"
           f"{'已記入離職倒數' if written else '寫入失敗'}"

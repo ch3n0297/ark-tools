@@ -77,6 +77,15 @@ class TestValidateOrders(unittest.TestCase):
         v = journal.validate_orders([buy("00876"), buy("0056", low=30.0, high=35.0)], pk)
         self.assertTrue(any("檔數" in x for x in v))          # 2 持股 + 2 新倉 > 2
 
+    def test_檔數上限為建議時不擋超限買單(self):
+        """ARK_NAMES_CAP=advisory：檔數公式只是參考，買幾檔由決策層判斷"""
+        pk = {**PACKET, "discipline": {**PACKET["discipline"], "max_names": 2,
+                                       "names_cap": "advisory",
+                                       "buy_candidates": ["00876", "0056"],
+                                       "adjust_required_before_buy": False}}
+        v = journal.validate_orders([buy("00876"), buy("0056", low=30.0, high=35.0)], pk)
+        self.assertFalse(any("檔數" in x for x in v))
+
     def test_既有超限不歸咎於本日決策(self):
         """小資組合可能一開始就超過檔數公式；只擋「讓檔數變得更糟」的單"""
         pk = {**PACKET, "discipline": {**PACKET["discipline"], "max_names": 1}}
@@ -279,6 +288,12 @@ class TestRecordDecision(unittest.TestCase):
         picked = journal.first_decision([first, second], "2026-08-10")
         self.assertIs(picked, first)
 
+    def test_latest_decision取同日最後一筆(self):
+        first, _ = journal.record_decision(decision([sell()]), PACKET, [])
+        second, _ = journal.record_decision(decision([]), PACKET, [first])
+        self.assertIs(journal.latest_decision([first, second], "2026-08-10"), second)
+        self.assertIsNone(journal.latest_decision([first, second], "2026-08-11"))
+
 
 class TestJournalIO(unittest.TestCase):
     def test_壞行略過不中斷(self):
@@ -301,6 +316,28 @@ class TestInferBuyPrice(unittest.TestCase):
 
     def test_原持股為零時即為新均價(self):
         self.assertAlmostEqual(journal.infer_buy_price(0, 0.0, 100, 88.0), 88.0)
+
+
+class TestRawPositions(unittest.TestCase):
+    """買進成交價由持倉均價 diff 反推，事前事後必須同一口徑（券商原值）。
+    2026-09-04 實例：事前用 packet 的含手續費均價、事後用券商原值，0052 持股 185 股
+    只買 21 股，每股 0.07 元的口徑差被放大成 0.6 元，反推價低於當日最低價。"""
+
+    def test_有券商原值就用原值(self):
+        got = journal.raw_positions({"0052": {"qty": 185, "avg_price": 62.28,
+                                               "raw_avg_price": 62.21}})
+        self.assertEqual(got, {"0052": {"qty": 185, "avg_price": 62.21}})
+
+    def test_舊決策包沒有原值時退用換算均價(self):
+        got = journal.raw_positions({"0052": {"qty": 185, "avg_price": 62.28}})
+        self.assertEqual(got["0052"]["avg_price"], 62.28)
+
+    def test_對回不受含費口徑污染(self):
+        before = {"0052": {"qty": 185, "avg_price": 100.07, "raw_avg_price": 100.0}}
+        after = {"0052": {"qty": 206, "avg_price": (185 * 100.0 + 21 * 101.0) / 206}}
+        fills, _ = journal.match_fills([buy(code="0052", qty=21, low=100.5, high=101.5)],
+                                       [], journal.raw_positions(before), after)
+        self.assertAlmostEqual(fills[0]["price"], 101.0, places=6)
 
 
 class TestMatchFills(unittest.TestCase):

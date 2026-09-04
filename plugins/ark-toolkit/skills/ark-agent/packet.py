@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(HERE, "..", "..", "lib")))
 
 import ark      # noqa: E402
 import market   # noqa: E402
+import source   # noqa: E402
 
 PACKET_DIR = os.path.expanduser("~/.ark-toolkit/agent/packets")
 SYNC_PY = os.path.abspath(os.path.join(HERE, "..", "ark-sync", "sync.py"))
@@ -71,12 +72,35 @@ def load_rules(path=RULES_PATH):
 
 # ---------------------------------------------------------------- 紀律邊界（純函式）
 
-def compute_max_names(stock_value, cash):
+def names_floor():
+    """檔數下限，`ARK_NAMES_FLOOR` 設定（預設 1＝純公式）。
+
+    使用者可依自己的分散需求把公式算出的檔數抬高；這是對 ARK 紀律的明示偏離，
+    所以寫進 discipline 讓紀律報告看得出來源，而不是悄悄改公式。
+    """
+    return int(os.environ.get("ARK_NAMES_FLOOR", "1"))
+
+
+def names_cap():
+    """檔數上限的性質，`ARK_NAMES_CAP` 設定：`hard`（預設，journal 依此拒單）或
+    `advisory`（公式值只是參考，買幾檔由決策層判斷）。
+
+    餵給 App 位階運算機的檔數不受此影響——那是「App 對這筆閒錢分幾檔」的輸入，
+    改了會扭曲每檔建議金額。
+    """
+    cap = os.environ.get("ARK_NAMES_CAP", "hard")
+    if cap not in ("hard", "advisory"):
+        raise ValueError(f"ARK_NAMES_CAP 只能是 hard 或 advisory，得到 {cap!r}")
+    return cap
+
+
+def compute_max_names(stock_value, cash, floor=1):
     """檔數公式（官方教學）：(持股市值＋閒錢) ÷ 10 萬，90 萬以上封頂 9，至少 1。
 
     檔數同時是「當天最多可買的股票種數」。語意出處：references/ark-app-map.md。
+    `floor` 只抬高不壓低，且不破九檔封頂。
     """
-    return max(1, min(9, int((stock_value + cash) // 100_000)))
+    return min(9, max(floor, 1, int((stock_value + cash) // 100_000)))
 
 
 def build_discipline(posture, holdings, layout):
@@ -98,7 +122,9 @@ def build_discipline(posture, holdings, layout):
                  if h.suggest_qty is not None and h.pnl > 0 and h.code not in priority]
     rows = layout.rows.values() if layout else ()
     return {
-        "max_names": compute_max_names(stock_value, cash),
+        "max_names": compute_max_names(stock_value, cash, names_floor()),
+        "names_floor": names_floor(),
+        "names_cap": names_cap(),
         "adjust_required_before_buy": adjust > 0,
         "adjust_amount": adjust,
         "sellable": sellable,
@@ -128,6 +154,23 @@ def positions_diff(holdings, positions):
 
 
 # ---------------------------------------------------------------- 序列化與組裝
+
+def broker_positions(api, basis):
+    """券商持倉 {代號: {qty, avg_price, raw_avg_price, last_price, pnl}}。
+
+    `avg_price` 依 ARK 的口徑換算——對帳兩邊口徑必須相同：ARK 以含手續費均價
+    同步後，拿券商原值來比會天天判「不一致」，risk.py 隨即全面阻擋（2026-08-26
+    實例）。`raw_avg_price` 是券商原值——成交對回拿事後的券商原值反推買價，
+    事前也得是原值，否則口徑差會被舊持股數放大（2026-09-04 實例：0052 反推價
+    低於當日最低價）。`unit` 用文件明載的字面值 "Share"，與
+    source.read_shioaji_positions 一致。
+    """
+    adjusted = source.read_shioaji_positions(api, basis)
+    return {p.code: {"qty": int(p.quantity), "avg_price": adjusted[p.code][1],
+                     "raw_avg_price": float(p.price),
+                     "last_price": float(p.last_price), "pnl": float(p.pnl)}
+            for p in api.list_positions(api.stock_account, unit="Share")}
+
 
 def serialize_holdings(holdings):
     """與 analyze.build_snapshot 不同：cost / today_pnl / suggest_amount 必須保留，
@@ -261,9 +304,8 @@ def main():
 
     ark.check_platform(tool="ark-agent")
     import ax
-    import shioaji as sj
 
-    pid = ark.ensure_responsive(ax, ax.activate())   # 殭屍態在這裡自癒，不留到讀取中途
+    pid = ark.ensure_responsive(ax, ax.ensure_ready())   # 不搶焦點；殭屍態在這裡自癒，不留到讀取中途
 
     # 佈局的眼睛：先把策略頁分區的當日標的「取代」進布局自選，買進候選才是
     # 今天的價值區而非建清單那天的快照。刷新失敗沿用舊清單（位階欄仍會擋掉
@@ -287,7 +329,7 @@ def main():
     # 決策層應以它為錨（與賣出側的 suggest_qty 對稱）。
     if posture is not None:
         budget = max(0.0, posture.suggested_value - posture.stock_value)
-        names = compute_max_names(posture.stock_value, posture.cash)
+        names = compute_max_names(posture.stock_value, posture.cash, names_floor())
         if budget > 0 and ark.run_tier_calculator(ax, pid, budget, names):
             print(f"  位階運算完成（閒錢 {budget:,.0f}／{names} 檔）", flush=True)
 
@@ -295,11 +337,9 @@ def main():
     layout = ark.read_layout(ax, pid)
     print(f"  「{layout.watchlist}」{len(layout.rows)} 檔", flush=True)
 
+    basis = source.cost_basis(source.load_config())   # 對帳口徑跟著 ARK 同步時用的走
     with market.session() as api:
-        rows = api.list_positions(api.stock_account, unit=sj.Unit.Share)
-        positions = {p.code: {"qty": int(p.quantity), "avg_price": float(p.price),
-                              "last_price": float(p.last_price), "pnl": float(p.pnl)}
-                     for p in rows}
+        positions = broker_positions(api, basis)
         diff = positions_diff(holdings, positions)
         sync_ok = not diff
         if diff and not args.no_sync:
@@ -308,10 +348,7 @@ def main():
             run_sync()
             # 不論同步回報成功與否都要重讀——動過寫入，手上的資料就過期了
             holdings, declared, posture = read_ark(ax, pid)
-            rows = api.list_positions(api.stock_account, unit=sj.Unit.Share)
-            positions = {p.code: {"qty": int(p.quantity), "avg_price": float(p.price),
-                                  "last_price": float(p.last_price), "pnl": float(p.pnl)}
-                         for p in rows}
+            positions = broker_positions(api, basis)
             diff = positions_diff(holdings, positions)
             sync_ok = not diff
 

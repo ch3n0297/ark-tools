@@ -213,11 +213,14 @@ def main():
     ap.add_argument("--date", help="覆寫決策日（預設今天）")
     ap.add_argument("--dry-run", action="store_true",
                     help="只印出將送出的委託腿，不連線")
+    ap.add_argument("--latest", action="store_true",
+                    help="送同日最後一筆（amended）決策；預設送第一筆")
     args = ap.parse_args()
 
     date = args.date or dt.date.today().isoformat()
     pk = packet_mod.load_packet(date)
-    decision = journal.first_decision(journal.load_entries(), date)
+    pick = journal.latest_decision if args.latest else journal.first_decision
+    decision = pick(journal.load_entries(), date)
     env_path = os.path.join(risk.ENVELOPE_DIR, f"{date}.json")
     if pk is None or decision is None or not os.path.exists(env_path):
         missing = [n for n, ok in (("決策包", pk), ("決策", decision),

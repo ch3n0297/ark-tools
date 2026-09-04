@@ -386,6 +386,26 @@ class TestBuildEnvelope(unittest.TestCase):
         """遲滯要比對歷次的『公式原值』，envelope 不留它就沒得比"""
         self.assertEqual(self.env()["core"]["raw_max_names"], 2)
 
+    def test_執行邊界帶出檔數上限的性質(self):
+        """決策層要從 envelope 知道 max_names 是硬上限還是參考值"""
+        self.assertEqual(self.env()["core"]["names_cap"], "hard")      # packet 未標時預設硬規則
+        pk = make_packet()
+        pk["discipline"]["names_cap"] = "advisory"
+        self.assertEqual(self.env(packet=pk)["core"]["names_cap"], "advisory")
+
+    def test_檔數下限是設定不是震盪_不受遲滯壓制(self):
+        """歷史全是 1、今天 packet 因 ARK_NAMES_FLOOR 算出 3：遲滯會把有效值留在 1，
+        但下限是使用者設定而非總資源在門檻附近震盪，envelope 要立刻放行 3"""
+        pk = make_packet()
+        pk["discipline"] = {**pk["discipline"], "max_names": 3, "names_floor": 3}
+        e = risk.build_envelope(
+            packet=pk, assigned=ASSIGNED,
+            equity_points=[equity.make_point("2026-08-10", 196349.0, 14673.0, 47600.0)],
+            satellite_exits=[], calendar=CALENDAR, today="2026-08-11",
+            effective_max_names=1, max_names_history=[1, 1, 1, 1, 3],
+            config=risk.DEFAULTS)
+        self.assertEqual(e["core"]["max_names"], 3)
+
 
 class TestFullyBlocked(unittest.TestCase):
     """排程要能分辨「今天不該交易」與「程式壞了」——前者離開碼 3、後者 2。

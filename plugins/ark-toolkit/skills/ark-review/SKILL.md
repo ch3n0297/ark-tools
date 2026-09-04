@@ -55,6 +55,14 @@ description: 決策複盤：把一段期間的決策、當時理由、成交與�
    完整脈絡——準則只留短句，理由留在這裡
 5. **commit** 準則檔與檢討記錄，讓每次規則變更都有 git 歷史可追
 
+## 自動化（每週五）
+
+上述流程 1～5 由 `ark-agent/daily.py review` 每週五 15:00 自動跑（launchd
+`com.hjc.ark-agent.review.plist`）：`review.py --out` 組案例 → 複盤層（`prompts/review.md`，
+只給 Read／Write／Edit）寫檢討記錄並更新準則檔 → `rules_intact` 驗原有編號一條不少
+（壞了從 `~/.ark-toolkit/agent/reviews/<date>.rules.bak` 還原）→ git commit → 通知。
+在對話裡手動複盤仍照本 skill 走；兩者寫的是同一份準則檔。
+
 ## 誠實準則（重要）
 
 - **證據不足就說證據不足**。T+5 最快要 5 個交易日、T+20 要一個月。實驗初期的

@@ -258,9 +258,11 @@ class FakeAX:
     """最小的 ax 替身。`clearable` 為 False 時模擬 ARK 運算頁：
     ⊗ 按了回傳成功但值不變（AXPress 假成功），退格也打不進去。"""
 
-    def __init__(self, value="30,000", clearable=True):
+    def __init__(self, value="30,000", clearable=True, keyboard_delay=0):
         self.field = FakeField(value)
         self.clearable = clearable
+        self.keyboard_delay = keyboard_delay      # 還要幾次查詢鍵盤才浮起
+        self.keyboard = keyboard_delay == 0
 
     def window(self, pid):
         return "window"
@@ -282,8 +284,22 @@ class FakeAX:
         if self.clearable:
             self.field.value = ""
 
+    def keyboard_up(self, pid):
+        if not self.keyboard:
+            self.keyboard_delay -= 1
+            self.keyboard = self.keyboard_delay <= 0
+            return None
+        return (82, 368, 442, 419)
+
+    def dismiss_keyboard(self, pid):
+        self.keyboard = False
+
+    def perform(self, el, action):
+        return 0
+
     def keystroke(self, pid, s):
-        self.field.type(s)
+        # 鍵盤還沒浮起時前面的字元會被吞掉——1.8.2 實錄：「106」進去只剩「6」
+        self.field.type(s[-1:] if not self.keyboard else s)
 
 
 class TestFillFieldSafety(unittest.TestCase):
@@ -291,6 +307,15 @@ class TestFillFieldSafety(unittest.TestCase):
         fake = FakeAX(clearable=True)
         self.assertTrue(ark.fill_field(fake, 0, 0, "30000"))
         self.assertEqual(fake.field.value, "30000")
+
+    def test_鍵盤延遲浮起時要等它_不然前綴被吞掉(self):
+        """App 1.8.2 的軟鍵盤是獨立視窗，彈出有延遲；press 後固定睡 0.4 秒就打字，
+        「106」會只剩「6」（2026-09-02 實錄，同值寫入因此驗算不符被擋下）。"""
+        from unittest import mock
+        fake = FakeAX(value="", clearable=True, keyboard_delay=3)
+        with mock.patch("time.sleep"):
+            self.assertTrue(ark.fill_field(fake, 0, 0, "106"))
+        self.assertEqual(fake.field.value, "106")
 
     def test_清不掉時絕不打字(self):
         """ARK 運算頁用自製數字鍵盤，⊗ 與退格都進不去。往沒清空的欄位打字會
@@ -408,12 +433,14 @@ class FakeAx:
     press/click 有效時把「自選／運算」的按壓轉成換頁。
     """
     PAGES = {"watchlist": {"自選", "運算", "調節 庫存", "布局 自選"},
-             "posture": {"自選", "運算", "風控 運算"}}
+             "posture": {"自選", "運算", "風控 運算"},
+             "splash": set()}                      # 冷啟動過場：什麼地標都沒有
 
     def __init__(self, page="posture", press_effective=True,
                  click_effective=True, restart_fixes=False,
-                 press_needs_scroll=False):
+                 press_needs_scroll=False, splash_polls=0):
         self.page = page
+        self.splash_polls = splash_polls           # 重啟後要輪詢幾次 window() 才過完過場
         self.press_effective = press_effective
         self.click_effective = click_effective
         self.restart_fixes = restart_fixes
@@ -424,6 +451,10 @@ class FakeAx:
         self._last_pressed = None
 
     def window(self, pid):
+        if self.page == "splash":
+            self.splash_polls -= 1
+            if self.splash_polls <= 0:
+                self.page = "watchlist"
         return self.page
 
     def by_desc(self, w, text):
@@ -461,7 +492,7 @@ class FakeAx:
 
     def restart_app(self):
         self.restarted = True
-        self.page = "watchlist"
+        self.page = "splash" if self.splash_polls > 0 else "watchlist"
         if self.restart_fixes:
             self.press_effective = True
         return 99
@@ -551,6 +582,16 @@ class TestEnsureResponsive(unittest.TestCase):
             ark.ensure_responsive(fake, 1, probe_timeout=0.05)
         self.assertTrue(fake.restarted)            # 有試過重啟才放棄
 
+    def test_重啟後過場畫面沒有tab_bar時要等而不是立刻判死(self):
+        # 2026-09-02 實錄：restart_app 在 AXWindows 一讀得到就回來，此時還是過場畫面，
+        # probe 找不到「自選」也找不到「back」立刻回 False → 誤報「重啟後仍無效」
+        from unittest import mock
+        fake = FakeAx(press_effective=False, click_effective=False,
+                      restart_fixes=True, splash_polls=3)
+        with mock.patch("time.sleep"):
+            pid = ark.ensure_responsive(fake, 1, probe_timeout=0.05)
+        self.assertEqual(pid, 99)
+
 
 SHIOAJI_CFG = {"version": 2, "accounts": [{"type": "shioaji", "name": "永豐"}]}
 FILE_CFG = {"version": 2, "accounts": [
@@ -574,5 +615,532 @@ class TestSyncLogEntry(unittest.TestCase):
         self.assertEqual(entry["cost_basis"], "不含息、不含手續費")
 
 
+# v1.8.0（2026-08-26）起，種類後多了「股價, 漲跌幅」兩欄，漲跌幅形如「▲25(1.05%)」；
+# 建議調節兩欄仍是可選的、接在漲跌幅之後（依表頭順序）。舊版列必須照常可解析——
+# 使用者的 App 不一定同時更新。前兩筆取自實機。
+V180_NO_SUGGEST = "台積電, 2330, 價值, 現\n股, 2,400, ▲25(1.05%), 41,145\n18, 43,200, +2,056\n+5%, +450, 2,285.78"
+V180_DOWN = "元大電子, 0053, 價值, 現\n股, 236.15, ▼3.8(-1.58%), 491\n2, 473, -18\n-3.81%, -7, 245.5"
+# 有建議調節的 1.8.0 列尚未在實機出現（當日參考調節為 0），依表頭順序推定
+V180_WITH_SUGGEST = ("富邦摩台, 0057, 價值, 升溫, 現\n股, 311.2, ▼0.15(-0.05%), ≥ 2,456, ≥ 8, 30,905"
+                     "\n100, 30,755, -150\n-0.49%, +12, 309.05")
+
+
+class TestParseHoldingV180(unittest.TestCase):
+    def test_新增的股價與漲跌幅欄不被當成建議調節(self):
+        h = sync.parse_holding(V180_NO_SUGGEST)
+        self.assertEqual((h.code, h.qty, h.price), ("2330", 18, 2285.78))
+        self.assertEqual(h.tiers, ("價值",))
+        self.assertIsNone(h.suggest_qty)
+        self.assertIsNone(h.suggest_amount)
+
+    def test_尾端數值欄不受新欄影響(self):
+        h = sync.parse_holding(V180_NO_SUGGEST)
+        self.assertEqual((h.cost, h.value, h.pnl, h.roi, h.today_pnl),
+                         (41145.0, 43200.0, 2056.0, 5.0, 450.0))
+
+    def test_下跌的漲跌幅同樣略過(self):
+        h = sync.parse_holding(V180_DOWN)
+        self.assertEqual((h.code, h.qty, h.price, h.roi), ("0053", 2, 245.5, -3.81))
+
+    def test_漲跌幅之後仍可接建議調節(self):
+        h = sync.parse_holding(V180_WITH_SUGGEST)
+        self.assertEqual(h.tiers, ("價值", "升溫"))
+        self.assertEqual((h.suggest_amount, h.suggest_qty), (2456.0, 8))
+        self.assertEqual((h.qty, h.price), (100, 309.05))
+
+    def test_中段認不得回傳None而非拋例外(self):
+        """欄位再變動時要走 looks_like_holding_row → ParseFailed 帶樣本，
+        而不是 ValueError traceback 把 visible_codes 整個炸掉（1.8.0 實例）。"""
+        odd = "甲, 0001, 現\n股, 1, 2, 3, 100\n1, 100, 0\n0%, 0, 100"
+        self.assertIsNone(sync.parse_holding(odd))
+
+
+class FakePostureAx:
+    """模擬 1.8.x 的運算頁：輸入面板在固定儀表板下方的可捲區，App 預設捲到最底的
+    摘要區。欄位被儀表板蓋住時 AXPress 不會開鍵盤，之後的座標點擊全部落到別處
+    （實機曾因此點進 tab bar、跑到個股頁）。鍵盤座標用 keypad_point 反查。"""
+    POS, SIZE = (35.0, 293.0), (288.0, 545.0)
+    HIDDEN_Y, VISIBLE_Y = 166.0, 370.0
+
+    def __init__(self, value="88,347", at_top=False):
+        self.value = value
+        self.at_top = at_top
+        self.keypad_open = False
+        self.buffer = ""
+        self.events = []
+
+    def window(self, pid):
+        return "posture"
+
+    def by_desc(self, w, text):
+        return ["EL:" + text] if text in ("運算", "風控 運算", "持股配置建議") else []
+
+    def perform(self, el, action):
+        return 0
+
+    def text_fields(self, root):
+        return ["stock", "us", "cash", "usd"]
+
+    def attr(self, el, name):
+        return self.value if (el == "cash" and name == "AXValue") else None
+
+    def point(self, el):
+        if el == "cash":
+            return (self.POS[0] + 189, self.POS[1] + (self.VISIBLE_Y if self.at_top else self.HIDDEN_Y))
+        return self.POS
+
+    def size(self, el):
+        return self.SIZE
+
+    def scroll_page(self, pid, action, tries=4):
+        self.events.append(("scroll", action))
+        if action == "AXScrollUpByPage" and not self.at_top:
+            self.at_top = True
+            return 0
+        return None
+
+    def press(self, el):
+        if el == "cash":
+            self.events.append(("press", "cash"))
+            self.keypad_open = self.at_top          # 被儀表板蓋住時開不了鍵盤
+            self.buffer = self.value.replace(",", "")
+        return 0
+
+    def click(self, x, y):
+        self.events.append(("click", (x, y)))
+        if not self.keypad_open:
+            return                                  # 沒鍵盤：點到別的東西，欄位不動
+        for row in ark.KEYPAD_KEYS:
+            for key in row:
+                kx, ky = ark.keypad_point(self.POS, self.SIZE, key)
+                if abs(kx - x) < 0.5 and abs(ky - y) < 0.5:
+                    self._key(key)
+                    return
+
+    def _key(self, key):
+        if key == "AC":
+            self.buffer = ""
+        elif key == "確定":
+            self.value = f"{int(self.buffer):,}" if self.buffer else ""
+            self.keypad_open = False
+        elif key.isdigit():
+            self.buffer += key
+
+
+class TestWritePostureCashScroll(unittest.TestCase):
+    """1.8.x 運算頁改成「固定儀表板＋可捲內容」，輸入面板預設被捲出視野。"""
+
+    def _write(self, fake, value):
+        from unittest import mock
+        with mock.patch("time.sleep"):
+            return ark.write_posture_cash(fake, 0, value)
+
+    def test_輸入面板捲出視野時先捲到頂再寫(self):
+        fake = FakePostureAx(at_top=False)
+        self.assertTrue(self._write(fake, 81727.0))
+        self.assertEqual(fake.value, "81,727")
+        first_scroll = fake.events.index(("scroll", "AXScrollUpByPage"))
+        first_press = fake.events.index(("press", "cash"))
+        self.assertLess(first_scroll, first_press)
+
+    def test_已在頂端時照常寫入(self):
+        fake = FakePostureAx(at_top=True)
+        self.assertTrue(self._write(fake, 81727.0))
+        self.assertEqual(fake.value, "81,727")
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakePopupAx:
+    """新增／編輯彈窗開著；右上角 X 在不在 AX tree 由 has_close 決定。"""
+
+    def __init__(self, has_close):
+        self.has_close = has_close
+        self.open = True
+        self.presses, self.clicks = [], []
+
+    def window(self, pid):
+        return "win"
+
+    def by_desc(self, w, text):
+        if text == "新增持股":
+            return [] if self.open else ["add"]
+        if text == "popup close" and self.has_close and self.open:
+            return ["x"]
+        return []
+
+    def press(self, el):
+        self.presses.append(el)
+        if el == "x":
+            self.open = False
+        return 0
+
+    def point(self, el):
+        return (77.0, 158.0)
+
+    def click(self, x, y):
+        self.clicks.append((x, y))
+
+
+class TestClosePopup(unittest.TestCase):
+    """1.8.2 實測（2026-09-02）：新增彈窗的 X 在 tree（desc=popup close，視窗相對 (248, 47)）。
+    舊的座標 fallback x+345 是縮放 1.0 時量的，現在視窗 288 寬會點到別的 App。"""
+
+    def test_X在tree就按它不點座標(self):
+        from unittest import mock
+        fake = FakePopupAx(has_close=True)
+        with mock.patch("time.sleep"):
+            self.assertTrue(sync._close_popup(fake, 0))
+        self.assertEqual(fake.presses, ["x"])
+        self.assertEqual(fake.clicks, [])
+
+    def test_X不在tree時回報失敗而不亂點(self):
+        from unittest import mock
+        fake = FakePopupAx(has_close=False)
+        with mock.patch("time.sleep"):
+            self.assertFalse(sync._close_popup(fake, 0))
+        self.assertEqual(fake.clicks, [])
+
+
+class FakeCalcPageAx:
+    """位階運算機各階段的畫面：input＝輸入頁，result＝1.8.2 留在運算機的結果頁，layout＝舊版跳轉。"""
+
+    def __init__(self, stage):
+        self.stage = stage
+
+    def by_desc(self, w, text):
+        present = {
+            "input": {"位階運算機", "AI運算今天可以買幾股"},
+            "loading": {"位階運算機"},
+            "result": {"位階運算機"},
+            "layout": {"布局 自選", "位階股數"},
+        }[self.stage]
+        return ["el"] if text in present else []
+
+    def descs(self, w, role=None):
+        rows = {"result": ["位階運算機", "富邦科技, 0052, 價值, 62.05, ▼1(-1.59%), 62.12, -0.11%, 1, 90, 63, 5,631"],
+                "loading": ["位階運算機", "運算中"]}.get(self.stage, [])
+        return [("el", d) for d in rows]
+
+
+class TestTierCalcDone(unittest.TestCase):
+    """2026-09-02 實錄（App 1.8.2）：AI運算後不再跳布局自選，結果留在運算機頁；
+    輸入頁與結果頁都有「位階運算機」標題，只能靠「輸入鈕消失＋結果列出現」判定。"""
+
+    def test_輸入頁不算完成(self):
+        self.assertFalse(ark.tier_calc_done(FakeCalcPageAx("input"), "w"))
+
+    def test_運算中沒有結果列不算完成(self):
+        self.assertFalse(ark.tier_calc_done(FakeCalcPageAx("loading"), "w"))
+
+    def test_結果頁算完成(self):
+        self.assertTrue(ark.tier_calc_done(FakeCalcPageAx("result"), "w"))
+
+    def test_舊版跳轉布局自選也算完成(self):
+        self.assertTrue(ark.tier_calc_done(FakeCalcPageAx("layout"), "w"))
+
+
+class FakeIosFieldAx:
+    """位階運算機的兩個 iOS 軟鍵盤欄位：每欄旁有 ⊗（calculator textfield cancel）。
+
+    元素模型：("field", i)、("cancel", i) 同屬父元素 "form"。
+    ⊗ 清空但掉焦點；AXPress 聚焦可設定失靈；退格可設定失靈；打字只在有焦點時生效。
+    """
+
+    def __init__(self, values, press_focus_works=True, backspace_works=True, typing_works=True):
+        self.values = list(values)
+        self.press_focus_works = press_focus_works
+        self.backspace_works = backspace_works
+        self.typing_works = typing_works
+        self.focused = None
+        self.clicks, self.presses = [], []
+
+    def window(self, pid):
+        return "w"
+
+    def text_fields(self, w):
+        return [("field", i) for i in range(len(self.values))]
+
+    def attr(self, el, name):
+        if el == "form" and name == "AXChildren":
+            return [x for i in range(len(self.values)) for x in (("field", i), ("cancel", i))]
+        kind, i = el
+        return {"AXParent": "form",
+                "AXRole": "AXTextField" if kind == "field" else "AXButton",
+                "AXDescription": "calculator textfield cancel" if kind == "cancel" else "",
+                "AXValue": self.values[i] if kind == "field" else None,
+                "AXFocused": (self.focused == i) if kind == "field" else None}.get(name)
+
+    def press(self, el):
+        self.presses.append(el)
+        kind, i = el
+        if kind == "cancel":
+            self.values[i] = ""
+            self.focused = None
+        elif self.press_focus_works:
+            self.focused = i
+        return 0
+
+    def point(self, el):
+        return (0.0, 20.0 * el[1])           # 每欄高 20，中心在 20i+10
+
+    def size(self, el):
+        return (100.0, 20.0)
+
+    def click(self, x, y):
+        self.clicks.append((x, y))
+        self.focused = int(y // 20)          # 座標點擊一律能聚焦
+
+    def keystroke(self, pid, s):
+        if self.focused is None:
+            return
+        if s == "\r":
+            self.focused = None
+        elif s and set(s) == {"\x08"}:
+            if self.backspace_works:
+                self.values[self.focused] = self.values[self.focused][:-len(s)]
+        elif self.typing_works:
+            self.values[self.focused] = self.values[self.focused].replace(",", "") + s
+
+    def backspace(self, pid, n):
+        self.keystroke(pid, "\x08" * n)
+
+    # 收鍵盤：焦點還在就當鍵盤浮著（write_ios_field 打完字要驗證收掉）
+    def keyboard_up(self, pid):
+        return (0, 0, 10, 10) if self.focused is not None else None
+
+    def dismiss_keyboard(self, pid):
+        self.keystroke(pid, "\r")
+
+    def perform(self, el, action):
+        if action == "AXCancel":
+            self.focused = None
+        return 0
+
+
+class TestWriteIosField(unittest.TestCase):
+    """2026-09-02 App 1.8.2 實錄：座標點擊聚焦後退格時靈時不靈（「2」退格再打「4」變「24」），
+    有時連焦點都沒建立，位階運算機的檔數欄三次都寫不進去。⊗ 清空→AXPress 聚焦→打字 6/6 成功。"""
+
+    def _write(self, fake, idx, digits):
+        from unittest import mock
+        with mock.patch("time.sleep"):
+            return ark.write_ios_field(fake, 0, idx, digits)
+
+    def test_清空鈕後AXPress聚焦打字_不動滑鼠(self):
+        fake = FakeIosFieldAx(["16,637", "3"])
+        self.assertTrue(self._write(fake, 1, "1"))
+        self.assertEqual(fake.values, ["16,637", "1"])
+        self.assertEqual(fake.clicks, [])
+
+    def test_退格失靈也寫得進去(self):
+        fake = FakeIosFieldAx(["16,637", "3"], backspace_works=False)
+        self.assertTrue(self._write(fake, 1, "1"))
+        self.assertEqual(fake.values[1], "1")
+
+    def test_AXPress聚焦失敗才退回座標點擊(self):
+        fake = FakeIosFieldAx(["16,637", "3"], press_focus_works=False)
+        self.assertTrue(self._write(fake, 0, "20000"))
+        self.assertEqual(fake.values[0], "20000")
+        self.assertGreaterEqual(len(fake.clicks), 1)
+
+    def test_完全寫不進去回False不拋(self):
+        fake = FakeIosFieldAx(["16,637", "3"], typing_works=False)
+        self.assertFalse(self._write(fake, 1, "1"))
+
+
+class FakeKeyboardAx:
+    """軟鍵盤浮起中：`\\r` 與欄位的 AXCancel 各自可設定有效與否。"""
+
+    def __init__(self, cr_works=False, cancel_works=True, focused=1, nfields=2):
+        self.cr_works = cr_works
+        self.cancel_works = cancel_works
+        self.focused = focused
+        self.nfields = nfields
+        self.up = True
+        self.events = []
+
+    def window(self, pid):
+        return "w"
+
+    def text_fields(self, w):
+        return [("field", i) for i in range(self.nfields)]
+
+    def attr(self, el, name):
+        return (el[1] == self.focused) if name == "AXFocused" else None
+
+    def keyboard_up(self, pid):
+        return (194, 404, 342, 279) if self.up else None
+
+    def dismiss_keyboard(self, pid):
+        self.events.append("cr")
+        if self.cr_works:
+            self.up, self.focused = False, None
+
+    def perform(self, el, action):
+        self.events.append((el, action))
+        if action == "AXCancel" and self.cancel_works:
+            self.up, self.focused = False, None
+        return 0
+
+
+class TestDismissKeyboard(unittest.TestCase):
+    """2026-09-02 App 1.8.2 實測：位階運算機的軟鍵盤是獨立的 layer-101 視窗
+    （AXWindows 看不到它），`\\r` 收不掉，蓋住「AI運算」讓 AXPress 假成功。
+    欄位的 AXCancel 收得掉，收掉後 AXPress 立刻生效。"""
+
+    def _dismiss(self, fake):
+        from unittest import mock
+        with mock.patch("time.sleep"):
+            return ark.dismiss_keyboard(fake, 0)
+
+    def test_cr有效就不必再AXCancel(self):
+        fake = FakeKeyboardAx(cr_works=True)
+        self.assertTrue(self._dismiss(fake))
+        self.assertEqual(fake.events, ["cr"])
+
+    def test_cr無效時對聚焦欄位AXCancel(self):
+        fake = FakeKeyboardAx(cr_works=False)
+        self.assertTrue(self._dismiss(fake))
+        self.assertIn((("field", 1), "AXCancel"), fake.events)
+
+    def test_沒有欄位聚焦就對每個欄位都試(self):
+        fake = FakeKeyboardAx(cr_works=False, focused=None)
+        self.assertTrue(self._dismiss(fake))
+        self.assertIn((("field", 0), "AXCancel"), fake.events)
+
+    def test_都收不掉回False(self):
+        fake = FakeKeyboardAx(cr_works=False, cancel_works=False)
+        self.assertFalse(self._dismiss(fake))
+
+    def test_鍵盤本來就沒浮起直接過(self):
+        fake = FakeKeyboardAx()
+        fake.up = False
+        self.assertTrue(self._dismiss(fake))
+        self.assertEqual(fake.events, [])
+
+
+class FakeSaveAx:
+    """編輯持股彈窗：兩個欄位已填好、總成本正確；鍵盤是否浮著與是否收得掉可設定。
+
+    儲存鈕被鍵盤蓋住時 AXPress **回成功但無效**（彈窗不關），正是 1.8.1 的
+    「儲存看似成功、下一檔全部寫空」的來源。
+    """
+
+    def __init__(self, kb_up=False, cr_works=True, cancel_works=True):
+        self.kb_up = kb_up
+        self.cr_works = cr_works
+        self.cancel_works = cancel_works
+        self.popup_open = True
+        self.saved = False
+        self.events = []
+
+    def window(self, pid):
+        return "w"
+
+    def text_fields(self, w):
+        return ["qty", "price"]
+
+    def attr(self, el, name):
+        if name == "AXValue":
+            return {"qty": "106", "price": "53.6"}.get(el)
+        if name == "AXFocused":
+            return self.kb_up and el == "price"
+        return None
+
+    def descs(self, w, role=None):
+        return [("el", "總成本：5,682 台幣")] if self.popup_open else []
+
+    def by_desc(self, w, text):
+        if text == "儲存" and self.popup_open:
+            return ["save"]
+        if text == "編輯持股" and self.popup_open:
+            return ["popup"]
+        if text == "popup close" and self.popup_open:
+            return ["x"]
+        if text == "新增持股" and not self.popup_open:
+            return ["add"]
+        return []
+
+    def keyboard_up(self, pid):
+        return (194, 404, 342, 279) if self.kb_up else None
+
+    def dismiss_keyboard(self, pid):
+        self.events.append("cr")
+        if self.cr_works:
+            self.kb_up = False
+
+    def perform(self, el, action):
+        self.events.append((el, action))
+        if action == "AXCancel" and self.cancel_works:
+            self.kb_up = False
+        return 0
+
+    def press(self, el):
+        self.events.append(("press", el))
+        if el in ("save", "x") and not self.kb_up:      # 鍵盤蓋住就假成功
+            self.popup_open = False
+        return 0
+
+
+class TestVerifyAndSave(unittest.TestCase):
+    """存檔前一定要確認鍵盤收掉：儲存鈕在彈窗底部，鍵盤蓋著時 AXPress 假成功
+    （1.8.1 實錄：儲存看似成功，殘留的 first responder 讓下一檔全部寫空）。"""
+
+    def _save(self, fake):
+        from unittest import mock
+        with mock.patch("time.sleep"):
+            return sync._verify_and_save(fake, 0, 106, 53.6, "編輯持股")
+
+    def test_沒有鍵盤時直接儲存(self):
+        fake = FakeSaveAx(kb_up=False)
+        self.assertTrue(self._save(fake))
+        self.assertTrue(fake.popup_open is False)
+
+    def test_鍵盤浮著要先收掉再儲存(self):
+        fake = FakeSaveAx(kb_up=True, cr_works=False)
+        self.assertTrue(self._save(fake))
+        self.assertIn(("price", "AXCancel"), fake.events)
+
+    def test_鍵盤收不掉就不儲存並回報失敗(self):
+        fake = FakeSaveAx(kb_up=True, cr_works=False, cancel_works=False)
+        self.assertFalse(self._save(fake))
+        self.assertNotIn(("press", "save"), fake.events)
+
+
+class TestCrossCheckWithServer(unittest.TestCase):
+    """AX 讀到的庫存要和伺服器對一次帳才動手寫。
+
+    parser 被 App 改版弄壞時，read_holdings 可能靜默少讀幾檔（1.8.0 的布局頁就這樣
+    回過空 dict）；差異計算會據此判斷「ARK 少了這幾檔」而去新增，把好好的資料弄亂。
+    伺服器那份是同一批資料的獨立來源，不一致就該停手讓人看一眼。
+    API 讀不到（token 過期、沒網路）**不是**停手的理由——每日同步不能被一個輔助檢查綁架。
+    """
+
+    def test_一致就放行(self):
+        ok, msg = sync.cross_check({"0050": (53, 106.28)}, {"0050": (53, 106.28)})
+        self.assertTrue(ok)
+        self.assertIsNone(msg)
+
+    def test_股數不一致要擋下並指名是哪一檔(self):
+        ok, msg = sync.cross_check({"0050": (53, 106.28)}, {"0050": (63, 106.28)})
+        self.assertFalse(ok)
+        self.assertIn("0050", msg)
+
+    def test_少讀一檔要擋下(self):
+        ok, msg = sync.cross_check({"0050": (53, 106.28)},
+                                   {"0050": (53, 106.28), "0056": (106, 53.6)})
+        self.assertFalse(ok)
+        self.assertIn("0056", msg)
+
+    def test_均價容差內視為一致(self):
+        # 兩邊都是「成交均價」但小數位可能差一點，用與 plan_changes 相同的容差
+        ok, _msg = sync.cross_check({"0050": (53, 106.28)}, {"0050": (53, 106.281)})
+        self.assertTrue(ok)
+
+    def test_伺服器讀不到就放行不擋(self):
+        ok, msg = sync.cross_check({"0050": (53, 106.28)}, None)
+        self.assertTrue(ok)
+        self.assertIsNone(msg)

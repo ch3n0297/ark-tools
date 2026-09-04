@@ -215,6 +215,16 @@ def adherence(decision, pk, fill_entry):
 
 # ---------------------------------------------------------------- 彙總
 
+def fills_by_ref(entries):
+    """{決策日: 對回 entry}。同一決策有多筆對回時取**最後**一筆：journal 只能
+    附加，對回算錯是補一筆更正條目（`corrected`），評估要認更正後的。"""
+    out = {}
+    for e in entries:
+        if e.get("type") == "fill" and e.get("decision_ref") is not None:
+            out[e["decision_ref"]] = e
+    return out
+
+
 def evaluate_all(entries, packets, prices, benchmark_bars, dividends,
                  orders_of=core_orders):
     """`orders_of` 決定要評估哪些委託，預設只取主軌以維持實驗效度。
@@ -224,10 +234,7 @@ def evaluate_all(entries, packets, prices, benchmark_bars, dividends,
     daily = {code: {b["date"]: b for b in bars} for code, bars in prices.items()}
 
     decision_dates = sorted({e["date"] for e in entries if e.get("type") == "decision"})
-    fills_by_ref = {}
-    for e in entries:
-        if e.get("type") == "fill" and e.get("decision_ref") is not None:
-            fills_by_ref.setdefault(e["decision_ref"], e)
+    fills = fills_by_ref(entries)
     missed = [e for e in entries if e.get("type") == "missed"]
     amended = sum(1 for e in entries
                   if e.get("type") == "decision" and e.get("amended"))
@@ -238,7 +245,7 @@ def evaluate_all(entries, packets, prices, benchmark_bars, dividends,
     for date in decision_dates:
         d = journal.first_decision(entries, date)
         pk = packets.get(date)
-        fe = fills_by_ref.get(date)
+        fe = fills.get(date)
         if pk:
             adherence_rows.append(adherence(d, pk, fe))
         fills = {(f["action"], f["code"]): f for f in (fe or {}).get("fills", [])}

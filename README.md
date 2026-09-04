@@ -83,14 +83,16 @@ uv run plugins/ark-toolkit/skills/ark-explore/run.py --show      # 看功能地�
 純邏輯測試不需要 ARK 執行中，任何平台皆可跑：
 
 ```bash
-cd plugins/ark-toolkit/lib                && uv run --no-project --python 3.13 --with openpyxl python -m unittest test_source test_dialogs
+cd plugins/ark-toolkit/lib                && uv run --no-project --python 3.13 --with openpyxl python -m unittest test_source test_dialogs test_arkapi
+cd plugins/ark-toolkit/lib                && uv run --no-project --python 3.13 --with pyobjc-framework-cocoa --with pyobjc-framework-applicationservices --with pyobjc-framework-quartz python -m unittest test_ax
 cd plugins/ark-toolkit/skills/ark-collect && PYTHONPATH=../../lib uv run --no-project --python 3.13 --with openpyxl --with python-dotenv python -m unittest test_collect
 cd plugins/ark-toolkit/skills/ark-read    && PYTHONPATH=../../lib uv run --no-project --python 3.13 --with openpyxl --with python-dotenv python -m unittest test_read
 cd plugins/ark-toolkit/skills/ark-sync    && PYTHONPATH=../../lib uv run --no-project --python 3.13 python -m unittest test_sync
 cd plugins/ark-toolkit/skills/ark-analyze && PYTHONPATH=../../lib uv run --no-project --python 3.13 python -m unittest test_analyze
 cd plugins/ark-toolkit/skills/ark-explore && PYTHONPATH=../../lib uv run --no-project --python 3.13 python -m unittest test_explore
 cd plugins/ark-toolkit/skills/ark-setup   && PYTHONPATH=../../lib uv run --no-project --python 3.13 --with openpyxl --with python-dotenv python -m unittest test_setup
-cd plugins/ark-toolkit/skills/ark-agent   && PYTHONPATH=../../lib uv run --no-project --python 3.13 python -m unittest test_market test_packet test_journal test_evaluate test_risk test_tracks test_equity test_execute test_daily test_phase0 test_review test_record_return test_dividends
+cd plugins/ark-toolkit/skills/ark-agent   && PYTHONPATH=../../lib uv run --no-project --python 3.13 python -m unittest test_market test_packet test_journal test_evaluate test_risk test_tracks test_equity test_execute test_daily test_phase0 test_review test_dividends
+cd plugins/ark-toolkit/skills/ark-agent   && PYTHONPATH=../../lib uv run --no-project --python 3.13 --with pyobjc-framework-cocoa --with pyobjc-framework-applicationservices --with pyobjc-framework-quartz python -m unittest test_record_return
 ```
 
 ## 通用性原則（給使用本 plugin 的 coding agent）

@@ -216,13 +216,17 @@ def read_csv_positions(path, columns):
 
 
 def merge_positions(by_account):
-    """多帳戶合併：股數相加、均價加權平均（Σ股數×均價 ÷ Σ股數）。"""
+    """多帳戶合併：股數相加、均價加權平均（Σ股數×均價 ÷ Σ股數），四捨五入到分。
+
+    不 round 的話單帳戶也會冒出 62.28000000000001 這種浮點殘差（2026-09-02
+    dry-run 實錄），str() 後整串打進 ARK 的均價欄。口徑與 adjust_price 一致。
+    """
     totals = {}
     for positions in by_account.values():
         for code, (qty, price) in positions.items():
             q0, cost0 = totals.get(code, (0, 0.0))
             totals[code] = (q0 + qty, cost0 + qty * price)
-    return {code: (q, cost / q) for code, (q, cost) in totals.items() if q}
+    return {code: (q, round(cost / q, 2)) for code, (q, cost) in totals.items() if q}
 
 
 def read_account_positions(account, basis):
