@@ -152,6 +152,18 @@ FILL = {"type": "fill", "date": "2026-08-04", "decision_ref": "2026-08-03",
         "unfilled": []}
 
 
+class TestFillsByRef(unittest.TestCase):
+    def test_同一決策的更正對回蓋過原對回(self):
+        """journal 只能附加：對回算錯時補一筆更正條目，評估要認最後那筆"""
+        fixed = {**FILL, "date": "2026-09-04", "corrected": True,
+                 "fills": [{**FILL["fills"][0], "price": 1655.0}]}
+        got = evaluate.fills_by_ref([FILL, fixed])
+        self.assertIs(got["2026-08-03"], fixed)
+
+    def test_沒有decision_ref的條目略過(self):
+        self.assertEqual(evaluate.fills_by_ref([{"type": "fill", "fills": []}]), {})
+
+
 class TestAdherence(unittest.TestCase):
     def test_覆蓋率封頂於一(self):
         a = evaluate.adherence(DECISION, PK, FILL)

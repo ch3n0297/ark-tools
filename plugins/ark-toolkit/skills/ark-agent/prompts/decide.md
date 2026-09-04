@@ -25,6 +25,9 @@
      同時持有幾檔**，不是「只能加碼手上那檔」——把一檔全部賣掉、同時買進
      候選中更適合的一檔，執行後仍是 1 檔，**合規**。主軌滿檔時換股是可選項，
      不要因為檔數上限就默認只能加碼既有部位。
+     **`envelope.core.names_cap` 為 `advisory` 時這條不是硬邊界**：`max_names`
+     只是 ARK 檔數公式（加使用者設定的下限）的參考值，買幾檔由你依分散與
+     過往成績判斷，超過參考值要在 `rationale` 說明理由。
 4. 衛星軌（`"track": "satellite"`）豁免上述紀律，但：
    - 標的必須在 `envelope.tracks.satellite.allowlist` 內
    - 淨買進不得超過 `envelope.tracks.satellite.remaining`

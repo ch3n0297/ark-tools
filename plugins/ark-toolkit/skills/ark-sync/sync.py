@@ -43,6 +43,37 @@ def check_platform(platform=None):
 
 # ---------------------------------------------------------------- 差異計算
 
+def server_positions():
+    """ARK 伺服器上的庫存 {代號: (股數, 均價)}；讀不到回 None（不是錯誤）。
+
+    走 App 自己的登入憑證，唯讀。App 沒開、token 過期、沒網路都只是「這次沒得對」。
+    """
+    try:
+        import arkapi
+        return arkapi.positions(arkapi.session())
+    except Exception as e:                    # noqa: BLE001 - 輔助檢查，任何失敗都只是跳過
+        print(f"  （跳過伺服器對帳：{e}）", flush=True)
+        return None
+
+
+def cross_check(current, server):
+    """AX 讀到的庫存 vs 伺服器那份，回傳 (可否繼續, 不符說明)。
+
+    這是 parser 的安全網：App 改版把列格式改掉時，`read_holdings` 可能靜默少讀幾檔
+    （1.8.0 的布局頁就這樣回過空 dict），差異計算會據此判斷「ARK 少了這幾檔」而去新增，
+    把原本好好的資料弄亂。伺服器那份是同一批資料的獨立來源。
+    `server` 為 None（token 過期、沒網路）時放行——每日同步不該被一個輔助檢查綁架。
+    """
+    if server is None:
+        return True, None
+    bad = []
+    for code in sorted(set(current) | set(server)):
+        a, b = current.get(code), server.get(code)
+        if a is None or b is None or a[0] != b[0] or abs(a[1] - b[1]) >= ark.PRICE_TOL:
+            bad.append(f"{code}: 畫面 {a} vs 伺服器 {b}")
+    return (False, "、".join(bad)) if bad else (True, None)
+
+
 def plan_changes(current, target):
     """以 Shioaji 為準，算出 ARK 需要的動作。
 
@@ -203,7 +234,12 @@ def _verify_and_save(ax, pid, qty, price, popup_label):
         _close_popup(ax, pid)         # 別直接 by_desc(...)[0]：X 可能不在 AX tree 裡
         return False
 
-    ax.dismiss_keyboard(pid)          # 不點掉「完成」，儲存鈕會被蓋住
+    # 儲存鈕在彈窗底部，軟鍵盤蓋著時 AXPress 假成功（1.8.1 實錄：儲存看似成功，
+    # 殘留的 first responder 讓同一輪的下一檔全部寫成空值）。收不掉就不要按。
+    if not ark.dismiss_keyboard(ax, pid):
+        print("    ✗ 軟鍵盤收不掉，儲存鈕會被蓋住，取消不儲存")
+        _close_popup(ax, pid)
+        return False
     ax.press(ax.by_desc(ax.window(pid), "儲存")[0])
     time.sleep(2.2)
     if ax.by_desc(ax.window(pid), popup_label):
@@ -235,10 +271,13 @@ def update_holding(ax, pid, code, qty, price):
 
 
 def _close_popup(ax, pid, tries=3):
-    """關掉新增／編輯彈窗，回到編輯庫存頁。
+    """關掉新增／編輯彈窗，回到編輯庫存頁；關不掉回 False，**不用座標亂點**。
 
-    「新增台股持股」右上角的 X **不在 AX tree 裡**（同 dismiss_keyboard 的問題），
-    只能用座標點；而搜尋下拉開著時要點兩次（第一次只收下拉）。
+    兩種彈窗右上角的 X 在 1.8.2 都在 AX tree（desc=`popup close`，2026-09-02 實測）。
+    早期版本曾見新增彈窗缺 X，於是留過座標 fallback（視窗 x+345）——那是縮放 1.0
+    時量的；現在視窗 288 寬、縮放 0.77，同一個常數落在 ARK 右邊的別的 App 上。
+    寧可回報「彈窗未關」讓呼叫端失敗，也不能點到別的視窗。
+    搜尋下拉開著時要按兩次（第一次只收下拉），所以保留重試。
     原本直接 `by_desc(w, "popup close")[0]`，找不到就拋 IndexError，
     把「已處理的失敗」變成 traceback。
     """
@@ -247,13 +286,9 @@ def _close_popup(ax, pid, tries=3):
         if ax.by_desc(w, "新增持股"):
             return True
         found = ax.by_desc(w, "popup close") or ax.by_desc(w, "close")
-        if found:
-            ax.press(found[0])
-        else:
-            pos = ax.point(w)
-            if pos is None:
-                return False
-            ax.click(pos[0] + 345, pos[1] + 74)
+        if not found:
+            return False
+        ax.press(found[0])
         time.sleep(1.2)
     return bool(ax.by_desc(ax.window(pid), "新增持股"))
 
@@ -369,6 +404,11 @@ def main():
     print(f"  ARK {len(holdings)} 檔" + (f"（App 宣告 {declared} 檔）" if declared else ""))
 
     current = {code: (h.qty, h.price) for code, h in holdings.items()}
+    ok, mismatch = cross_check(current, server_positions())
+    if not ok:
+        print(f"🛑 畫面讀到的庫存與 ARK 伺服器不符，可能是解析器壞了：{mismatch}", file=sys.stderr)
+        print("   在弄清楚之前不做任何寫入。", file=sys.stderr)
+        return 1
     plan = plan_changes(current, target)
     if plan:
         print(f"\n需要 {len(plan)} 項變更：")

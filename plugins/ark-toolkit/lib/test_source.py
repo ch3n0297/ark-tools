@@ -516,3 +516,17 @@ class TestReadPositionsCostBasis(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMergeRoundsToCents(unittest.TestCase):
+    """2026-09-02 dry-run 實錄：單帳戶 185 股×62.28 合併後回 62.28000000000001，
+    str() 後會整串打進 ARK 的均價欄。均價一律四捨五入到分，與 adjust_price 同口徑。"""
+
+    def test_單帳戶浮點殘差要被收掉(self):
+        merged = source.merge_positions({"永豐": {"0052": (185, 62.28)}})
+        self.assertEqual(merged["0052"], (185, 62.28))
+        self.assertEqual(str(merged["0052"][1]), "62.28")
+
+    def test_多帳戶加權平均也只留兩位(self):
+        merged = source.merge_positions({"a": {"2330": (3, 100.0)}, "b": {"2330": (7, 101.0)}})
+        self.assertEqual(merged["2330"], (10, 100.7))

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.hjc.ark-agent.review</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <!-- 進入點必須是 uv 而非 /bin/bash（TCC），理由見 decide.plist -->
+    <string>/opt/homebrew/bin/uv</string>
+    <string>run</string>
+    <string>/Users/hjc/Documents/Stock/plugin/plugins/ark-toolkit/skills/ark-agent/daily.py</string>
+    <string>review</string>
+  </array>
+
+  <!-- 週五 15:00：接在 14:30 settle 之後，本週最後一天的成交與淨值都已入帳。
+       複盤是對既成事實的檢討，時間窗寬（±240 分，定義在 daily.py 的 WINDOWS）。 -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/hjc/Documents/Stock</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/hjc/.local/bin</string>
+    <key>HOME</key>
+    <string>/Users/hjc</string>
+    <!-- 複盤模型：與決策同級——它寫的準則會直接影響隔天的判斷 -->
+    <key>ARK_DECISION_MODEL</key>
+    <string>fable</string>
+    <!-- 準則檔位置與 decide.plist 的 ARK_RULES 保持一致；未設則用 ~/.ark-toolkit/decision-rules.md -->
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/hjc/.ark-toolkit/agent/launchd.review.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/hjc/.ark-toolkit/agent/launchd.review.err</string>
+</dict>
+</plist>

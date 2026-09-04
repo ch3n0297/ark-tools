@@ -1,6 +1,8 @@
 """ark-agent 決策包純邏輯測試（不需要 ARK 或 Shioaji，任何平台可跑）"""
 import os
 import unittest
+import unittest.mock
+from types import SimpleNamespace
 
 import packet
 from ark import Holding, Layout, LayoutView, Posture
@@ -47,6 +49,28 @@ class TestComputeMaxNames(unittest.TestCase):
     def test_資金不足十萬至少一檔(self):
         self.assertEqual(packet.compute_max_names(50000.0, 0.0), 1)
 
+    def test_檔數下限可設定但不壓低公式也不破九檔封頂(self):
+        self.assertEqual(packet.compute_max_names(176664.0, 20000.0, floor=3), 3)
+        self.assertEqual(packet.compute_max_names(250000.0, 60000.0, floor=1), 3)
+        self.assertEqual(packet.compute_max_names(50000.0, 0.0, floor=12), 9)
+
+    def test_檔數下限預設一檔_由ARK_NAMES_FLOOR設定(self):
+        with unittest.mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ARK_NAMES_FLOOR", None)
+            self.assertEqual(packet.names_floor(), 1)
+        with unittest.mock.patch.dict(os.environ, {"ARK_NAMES_FLOOR": "3"}):
+            self.assertEqual(packet.names_floor(), 3)
+
+    def test_檔數上限預設硬規則_由ARK_NAMES_CAP設定(self):
+        with unittest.mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ARK_NAMES_CAP", None)
+            self.assertEqual(packet.names_cap(), "hard")
+        with unittest.mock.patch.dict(os.environ, {"ARK_NAMES_CAP": "advisory"}):
+            self.assertEqual(packet.names_cap(), "advisory")
+        with unittest.mock.patch.dict(os.environ, {"ARK_NAMES_CAP": "loose"}):
+            with self.assertRaises(ValueError):
+                packet.names_cap()
+
 
 class TestBuildDiscipline(unittest.TestCase):
     def disc(self, posture=POSTURE):
@@ -71,6 +95,16 @@ class TestBuildDiscipline(unittest.TestCase):
     def test_布局候選只含價值區(self):
         self.assertEqual(self.disc()["buy_candidates"], ["00876"])
         self.assertNotIn("00893", self.disc()["buy_candidates"])   # 純升溫不買
+
+    def test_紀律邊界套用檔數下限並記錄來源(self):
+        with unittest.mock.patch.dict(os.environ, {"ARK_NAMES_FLOOR": "3"}):
+            d = self.disc()
+        self.assertEqual(d["max_names"], 3)                        # 公式算 1，下限抬到 3
+        self.assertEqual(d["names_floor"], 3)
+
+    def test_紀律邊界記錄檔數上限是硬規則還是建議(self):
+        with unittest.mock.patch.dict(os.environ, {"ARK_NAMES_CAP": "advisory"}):
+            self.assertEqual(self.disc()["names_cap"], "advisory")
 
     def test_無posture時以持倉市值推檔數(self):
         d = packet.build_discipline(None, HOLDINGS, LAYOUT)
@@ -227,6 +261,53 @@ class TestPacketCarriesRules(unittest.TestCase):
     def test_準則相同則_hash_相同(self):
         r = {"source": "x.md", "text": "### R-001 甲\n", "ids": ["R-001"]}
         self.assertEqual(self.build(r)["hash"], self.build(r)["hash"])
+
+
+class TestBrokerPositions(unittest.TestCase):
+    """對帳兩邊的均價口徑必須相同：ARK 以含手續費均價同步後，拿券商原值來比
+    會天天判「不一致」，risk.py 隨即全面阻擋（2026-08-26 實例）。
+    分錄 fixture 與 lib/test_source.py 相同：原值 55.47，含手續費 55.67。"""
+
+    LOT = [SimpleNamespace(price=264.0, fee=1.0, ex_dividends=18),
+           SimpleNamespace(price=279.0, fee=1.0, ex_dividends=18),
+           SimpleNamespace(price=289.0, fee=1.0, ex_dividends=17)]
+    FEES = {"include_dividends": False, "include_fees": True}
+    RAW = {"include_dividends": False, "include_fees": False}
+
+    class Api:
+        stock_account = "ACC"
+
+        def __init__(self, lot):
+            self.lot = lot
+
+        def list_positions(self, account, unit=None):
+            return [SimpleNamespace(id=4, code="00911", quantity=15, price=55.47,
+                                    last_price=52.0, pnl=-52.0)]
+
+        def list_position_detail(self, account, detail_id=0):
+            return self.lot
+
+    def test_含手續費口徑的均價換算後才拿去比(self):
+        got = packet.broker_positions(self.Api(self.LOT), self.FEES)
+        self.assertEqual(got["00911"],
+                         {"qty": 15, "avg_price": 55.67, "raw_avg_price": 55.47,
+                          "last_price": 52.0, "pnl": -52.0})
+
+    def test_券商原值口徑不換算(self):
+        got = packet.broker_positions(self.Api(self.LOT), self.RAW)
+        self.assertEqual(got["00911"]["avg_price"], 55.47)
+
+    def test_持倉同時保留券商原值均價供對回用(self):
+        """成交對回拿事後的券商原值均價反推買價，事前若只有換算過的 ARK 口徑，
+        兩邊口徑不同，差額會被舊持股數放大（2026-09-04 實例：0052 反推價低於當日最低價）"""
+        got = packet.broker_positions(self.Api(self.LOT), self.FEES)
+        self.assertEqual(got["00911"]["avg_price"], 55.67)
+        self.assertEqual(got["00911"]["raw_avg_price"], 55.47)
+
+    def test_換算後與含費的ARK均價對帳一致(self):
+        holdings = {"00911": H("00911", 15, 55.67, 780.0)}
+        got = packet.broker_positions(self.Api(self.LOT), self.FEES)
+        self.assertEqual(packet.positions_diff(holdings, got), [])
 
 
 if __name__ == "__main__":

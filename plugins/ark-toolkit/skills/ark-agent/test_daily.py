@@ -148,3 +148,62 @@ class TestUnattendedSync(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestReviewWindow(unittest.TestCase):
+    def test_複盤窗在盤後且寬鬆(self):
+        """複盤是對既成事實的檢討，晚幾小時做結果一樣；但不該在盤中跑"""
+        scheduled, tolerance = daily.WINDOWS["review"]
+        self.assertTrue(daily.is_within_window("15:00", scheduled, tolerance))
+        self.assertTrue(daily.is_within_window("18:00", scheduled, tolerance))
+        self.assertFalse(daily.is_within_window("10:00", scheduled, tolerance))
+
+
+class TestReviewPromptRendering(unittest.TestCase):
+    TEMPLATE = "讀 REVIEW_PATH 與 RULES_PATH，寫到 REVIEW_DOC_PATH，日期 TODAY。"
+
+    def test_四個佔位符都被換掉(self):
+        out = daily.render_review_prompt(self.TEMPLATE, review="/r.txt",
+                                         rules="/rules.md", doc="/doc.md",
+                                         date="2026-09-04")
+        self.assertEqual(out, "讀 /r.txt 與 /rules.md，寫到 /doc.md，日期 2026-09-04。")
+
+    def test_未被取代的佔位符會報錯(self):
+        with self.assertRaises(ValueError):
+            daily.render_review_prompt("讀 REVIEW_PATH 和 MYSTERY_PATH", review="/r",
+                                       rules="/x", doc="/d", date="2026-09-04")
+
+
+class TestReviewDocPath(unittest.TestCase):
+    def test_檢討記錄放在準則檔旁的decision_reviews(self):
+        self.assertEqual(
+            daily.review_doc_path("/proj/docs/decision-rules.md", "2026-09-04"),
+            "/proj/docs/decision-reviews/2026-09-04.md")
+
+
+class TestRulesIntact(unittest.TestCase):
+    """複盤由模型改準則檔。改壞了（編號消失、標題格式解析不到）隔天決策就拿不到
+    準則，而且不會有人發現——寫回前要驗，驗不過就從備份還原。"""
+    BEFORE = "### R-001 甲\n內文\n### R-002 乙\n內文\n"
+
+    def test_原樣或新增準則都算完整(self):
+        self.assertTrue(daily.rules_intact(self.BEFORE, self.BEFORE))
+        self.assertTrue(daily.rules_intact(self.BEFORE,
+                                           self.BEFORE + "### R-003 丙\n內文\n"))
+
+    def test_淘汰的準則移到檔末仍算完整(self):
+        moved = "### R-002 乙\n內文\n## 已淘汰\n### R-001 甲\n內文\n"
+        self.assertTrue(daily.rules_intact(self.BEFORE, moved))
+
+    def test_編號消失算損壞(self):
+        self.assertFalse(daily.rules_intact(self.BEFORE, "### R-002 乙\n內文\n"))
+
+    def test_清空算損壞(self):
+        self.assertFalse(daily.rules_intact(self.BEFORE, ""))
+
+    def test_標題格式被改壞算損壞(self):
+        broken = self.BEFORE.replace("### R-001", "#### R-001")
+        self.assertFalse(daily.rules_intact(self.BEFORE, broken))
+
+    def test_原本沒有準則時新增即完整(self):
+        self.assertTrue(daily.rules_intact("", "### R-001 甲\n內文\n"))

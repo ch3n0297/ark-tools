@@ -20,6 +20,7 @@ SYNC_LOG = os.path.expanduser("~/.ark-toolkit/sync-log.jsonl")
 LAYOUT_ROW_H = 54     # 布局自選頁每列高度
 LAYOUT_SPLIT = 20     # 同一列內上下兩排的分界（相對列頂）
 TAIL_FIELDS = 7       # 調節庫存頁尾端固定欄位數（見 parse_holding）
+LAYOUT_LINE_FIELDS = 8   # v1.8.0 起布局自選頁單行文字的尾端固定欄位數（見 parse_layout_line）
 KIND_TAILS = ("股", "資", "券")   # 「現股／融資／融券」在 desc 中被換行拆成兩半
 PRICE_TOL = 0.005     # 均價比對容差（sync 與 analyze 共用）
 
@@ -127,7 +128,7 @@ def parse_holding(desc):
     """解析調節庫存頁的一列，回傳 Holding。
 
     欄位順序（依表頭）：
-        名稱, 代號, [位階], 種類, [建議調節金額], [建議調節股數],
+        名稱, 代號, [位階], 種類, [股價, 漲跌幅]（v1.8.0 起）, [建議調節金額], [建議調節股數],
         總成本, 持有股數, 總市值, 總損益, 報酬率, 今日損益, 成本均價
 
     位階與「建議調節」兩欄是**可選的**（App 未算出建議時整組消失），
@@ -147,8 +148,16 @@ def parse_holding(desc):
 
     tail = parts[-TAIL_FIELDS:]
     middle = parts[kind_idx + 1: len(parts) - TAIL_FIELDS]
+    # v1.8.0 起種類後多了「股價, 漲跌幅」兩欄再接可選的建議調節；漲跌幅帶括號
+    # （▲25(1.05%)）而建議調節不會（≥ 1,343），據此分辨新舊版面
+    if len(middle) >= 2 and "(" in middle[1]:
+        middle = middle[2:]
+    if len(middle) not in (0, 2):
+        return None
     try:
         cost, qty, value, pnl, roi, today, price = (num(x) for x in tail)
+        suggest_amount, suggest_qty = ((num(middle[0]), int(num(middle[1]))) if middle
+                                       else (None, None))
     except ValueError:
         return None
 
@@ -156,8 +165,7 @@ def parse_holding(desc):
         code=parts[1], qty=int(qty), price=price, cost=cost, value=value,
         pnl=pnl, roi=roi, today_pnl=today,
         tiers=tuple(parts[2:kind_idx - 1]),
-        suggest_amount=num(middle[0]) if len(middle) == 2 else None,
-        suggest_qty=int(num(middle[1])) if len(middle) == 2 else None,
+        suggest_amount=suggest_amount, suggest_qty=suggest_qty,
     )
 
 
@@ -223,6 +231,52 @@ def layout_is_consistent(row, tol=1):
     if row is None or row.price <= 0:
         return False
     return abs(row.risk_qty - int(row.risk_amount // row.price)) <= tol
+
+
+def parse_layout_line(desc):
+    """解析 v1.8.0 起布局自選頁的一列（整列是一段文字），回傳 Layout。
+
+    欄位順序（依表頭）：名稱, 代號, [位階…], 股價, 漲跌幅, 即時淨值, 折溢價%,
+    位階股數, 風控股數, 位階布局金額, 風控布局金額。位階可有零到多個，
+    故從尾端定位固定 8 欄。舊版的名稱列（「名稱, 代號, 位階」）欄位不足回 None。
+    """
+    parts = split_fields(desc or "")
+    if len(parts) < LAYOUT_LINE_FIELDS + 2:
+        return None
+    t = parts[-LAYOUT_LINE_FIELDS:]
+    try:
+        return Layout(
+            code=parts[1], tiers=tuple(parts[2:-LAYOUT_LINE_FIELDS]),
+            price=num(t[0]), change=t[1], nav=num(t[2]), premium=num(t[3]),
+            tier_qty=int(num(t[4])), risk_qty=int(num(t[5])),
+            tier_amount=num(t[6]), risk_amount=num(t[7]),
+        )
+    except ValueError:
+        return None
+
+
+def collect_layout_rows(names, cells):
+    """把一屏的名稱列與儲存格解析成 {代號: Layout}，回傳 (found, rejected)。
+
+    v1.8.0 起整列是一段文字（cells 用不到），之前是名稱列＋座標對回的儲存格；
+    兩種都試。像資料列卻解析不出、或風控股數對不上的列進 rejected——
+    1.8.0 改版時舊解析器一列都認不得、也不報錯，整頁靜默讀成 0 檔。
+    """
+    found, rejected = {}, []
+    for row_top, desc in names:
+        row = parse_layout_line(desc)
+        if row is None:
+            upper, lower = split_layout_cells(cells, row_top)
+            row = parse_layout(desc, upper, lower)
+        if row is None:
+            if len(split_fields(desc)) >= LAYOUT_LINE_FIELDS + 2:
+                rejected.append(desc)
+            continue
+        if layout_is_consistent(row):
+            found[row.code] = row
+        else:
+            rejected.append(desc)
+    return found, rejected
 
 
 def looks_like_holding_row(desc):
@@ -365,6 +419,10 @@ def ensure_responsive(ax, pid, probe_timeout=6.0):
     if probe(pid):
         return pid
     pid = ax.restart_app()
+    # restart_app 在 AXWindows 一讀得到就回來，那時多半還是冷啟動的過場畫面：
+    # 沒有 tab bar 也沒有 back，probe 會立刻回 False，被誤報成「重啟後仍無效」
+    # （2026-09-02 實錄，其實一分鐘後 App 好端端停在策略頁）。先等 tab bar 出現。
+    wait_for(ax, pid, lambda w: bool(ax.by_desc(w, "自選")), "重啟後 tab bar 出現", timeout=90.0)
     if not probe(pid):
         raise RuntimeError("ARK UI 無回應，重啟後仍無效")
     return pid
@@ -389,18 +447,11 @@ def _scroll_until_stable(step, probe, collect, max_rounds):
     raise RuntimeError("捲動未收斂，可能畫面持續變動")
 
 
-def scroll_until_stable(ax, cx, cy, dy, probe, collect=None, max_rounds=40):
-    """朝同一方向捲到內容不再變化為止；每輪先呼叫 collect() 收集當前畫面。
-
-    以「不再變化」為終止條件而非固定次數，因此不受持股檔數限制。
-    滾輪需要游標位置——只剩布局自選頁在用（該頁沒有可捲動的 AX 元素）；
-    調節庫存頁改用 scroll_page_until_stable，不動游標。
-    """
-    _scroll_until_stable(lambda: ax.scroll(cx, cy, dy, 3), probe, collect, max_rounds)
-
-
 def scroll_page_until_stable(ax, pid, action, probe, collect=None, max_rounds=40):
-    """scroll_until_stable 的 AX action 版：不動游標、ARK 失焦也有效。"""
+    """朝同一方向翻頁到內容不再變化為止；每輪先呼叫 collect() 收集當前畫面。
+
+    以「不再變化」為終止條件而非固定次數，因此不受列數限制。走 AX action 而非
+    滾輪：不需要游標位置，ARK 失焦也有效。"""
     _scroll_until_stable(lambda: ax.scroll_page(pid, action), probe, collect, max_rounds)
 
 
@@ -601,35 +652,31 @@ def read_layout(ax, pid, watchlist=None):
     pos, size = ax.point(w), ax.size(w)
     if pos is None or size is None:
         raise RuntimeError("讀不到 ARK 視窗位置")
-    cx, cy = pos[0] + 187, pos[1] + 444
     tab_top = pos[1] + size[1] - 60
 
     found, rejected = {}, []
 
     def collect():
         names, cells = layout_elements(ax, ax.window(pid), tab_top, pos[0])
-        for row_top, desc in names:
-            upper, lower = split_layout_cells(cells, row_top)
-            row = parse_layout(desc, upper, lower)
-            if row is None:
-                continue
-            if layout_is_consistent(row):
-                found[row.code] = row
-            else:
-                rejected.append(desc)
+        ok, bad = collect_layout_rows(names, cells)
+        found.update(ok)
+        rejected.extend(bad)
 
     def probe():
         names, _cells = layout_elements(ax, ax.window(pid), tab_top, pos[0])
         return tuple(sorted(d for _y, d in names))
 
-    scroll_until_stable(ax, cx, cy, 300, probe)             # 先確實捲到頂
-    scroll_until_stable(ax, cx, cy, -120, probe, collect)   # 再逐屏往下收集
+    # 先確實捲到頂，再逐頁往下收集（翻頁自帶重疊，不會跳列）。
+    # 2026-08 時這頁沒有任何可捲的 AX 元素，只能用滾輪、游標會被搶走；App 1.8.2
+    # 起 38 個元素支援翻頁 action（2026-09-02 實測），這條路徑於是不再動滑鼠。
+    scroll_page_until_stable(ax, pid, "AXScrollUpByPage", probe)
+    scroll_page_until_stable(ax, pid, "AXScrollDownByPage", probe, collect)
     ensure_adjust_mode(ax, pid)     # 模式選擇會被記住，不還原會害下一個讀取者走錯頁
 
     if rejected:
         raise ParseFailed(
-            f"有 {len(set(rejected))} 列的風控股數對不上「風控布局金額 ÷ 股價」，"
-            f"欄位可能已錯位。樣本：{sorted(set(rejected))[0]!r}"
+            f"有 {len(set(rejected))} 列解析不出、或風控股數對不上「風控布局金額 ÷ 股價」，"
+            f"欄位格式可能已變動。樣本：{sorted(set(rejected))[0]!r}"
         )
     return LayoutView(current, found)
 
@@ -642,6 +689,24 @@ def read_declared_count(ax, pid):
         if m:
             return int(m.group(1))
     return None
+
+
+def wait_keyboard(ax, pid, timeout=3.0):
+    """等軟鍵盤真的浮起來，回傳是否浮起。
+
+    App 1.8.2 的鍵盤是獨立 CGWindow，彈出有延遲；聚焦後固定睡 0.4 秒就打字，
+    前面幾個字元會被吞掉——實測「106」只進得去「6」（2026-09-02）。驗算擋得下
+    這種錯誤，但每次都要重試一輪，而重試也可能同樣太早。
+    等不到不算失敗：呼叫端仍會讀回驗證，而有些欄位（運算頁自製鍵盤）根本不開
+    系統鍵盤。
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if ax.keyboard_up(pid) is not None:
+            time.sleep(0.3)            # 浮起後再讓它安定一下
+            return True
+        time.sleep(0.2)
+    return False
 
 
 def clear_field(ax, field):
@@ -675,7 +740,7 @@ def fill_field(ax, pid, field_index, value):
     for _ in range(2):
         field = ax.text_fields(ax.window(pid))[field_index]
         ax.press(field)
-        time.sleep(0.4)
+        wait_keyboard(ax, pid)
         clear_field(ax, field)
         time.sleep(0.3)
         left = str(ax.attr(field, "AXValue") or "")
@@ -744,6 +809,12 @@ def write_posture_cash(ax, pid, value):
     w = goto_posture_page(ax, pid)
     if w is None:
         return False
+    # 1.8.x 起輸入面板在固定儀表板下方的可捲區，App 預設捲到最底的摘要區：欄位被
+    # 儀表板蓋住時 AXPress 不會開鍵盤，之後的座標點擊全落到 tab bar 上（實機曾因此
+    # 點進個股頁）。先捲到頂讓面板露出來；已在頂端時是 no-op。
+    scroll_page_until_stable(
+        ax, pid, "AXScrollUpByPage",
+        lambda: ax.point(ax.text_fields(ax.window(pid))[POSTURE_CASH_FIELD]))
     target = str(int(value))
     original = str(ax.attr(ax.text_fields(w)[POSTURE_CASH_FIELD], "AXValue")
                    or "").replace(",", "")
@@ -1013,42 +1084,101 @@ def replace_watchlist_from_strategy(ax, pid, strategy_tab, list_name):
     return codes
 
 
+def dismiss_keyboard(ax, pid, tries=3):
+    """收掉軟鍵盤並**驗證**收掉了，回傳是否成功。
+
+    先送 `\\r`（編輯庫存彈窗靠它，1.8.1 起是唯一有效的路徑），沒收掉再對欄位
+    執行 `AXCancel`——那是 iOS 的 resign first responder，位階運算機的鍵盤只吃
+    這條（2026-09-02 實測：`\\r`、點中性按鈕、AXSetValue(AXFocused, False)、
+    點標題區全部無效，AXCancel 一次就收掉，接著 AXPress「AI運算」立刻生效）。
+    驗證靠 `ax.keyboard_up`——鍵盤是獨立 CGWindow，AX 讀不到它，沒有這個訊號
+    就只能盲送然後在更遠處以「按鈕假成功」的形式失敗。
+    """
+    if ax.keyboard_up(pid) is None:
+        return True
+    ax.dismiss_keyboard(pid)
+    for _ in range(tries):
+        if ax.keyboard_up(pid) is None:
+            return True
+        fields = ax.text_fields(ax.window(pid))
+        focused = [f for f in fields if ax.attr(f, "AXFocused")] or fields
+        for f in focused:
+            ax.perform(f, "AXCancel")
+            time.sleep(0.4)
+            if ax.keyboard_up(pid) is None:
+                return True
+        time.sleep(0.4)
+    return ax.keyboard_up(pid) is None
+
+
 def write_ios_field(ax, pid, field_idx, digits, attempts=3):
     """iOS 軟鍵盤款欄位（AXValue 同步可讀那型）的寫入，回傳是否確認寫入。
 
-    點擊聚焦 → 退格清空 → 打字 → `\\r` 收鍵盤 → 讀回驗證。⊗ 清空會掉
-    焦點、AXPress 聚焦偶發不成立，所以聚焦用座標點擊、清空用退格；游標
-    未全選時打字是插入，不清空會拼出「51」這種錯值，讀回驗證會攔下重試。
-    另一型「提交前 AXValue 讀不到」的欄位（離職倒數報酬彈窗）不能用本
-    函式——讀回永遠失敗，見 record_daily_return 的提交後驗證。
+    ⊗ 清空 → AXPress 聚焦 → 打字 → `\\r` 收鍵盤 → 讀回驗證。
+    原本是座標點擊聚焦＋退格清空：App 1.8.2 實測（2026-09-02）點擊聚焦後退格
+    時靈時不靈（「2」退格再打「4」變成「24」），有時連焦點都沒建立，位階運算機的
+    檔數欄三次全寫不進去。⊗ 清空可靠但會掉焦點，所以清完再 AXPress 聚焦；
+    AXPress 沒聚到（AXFocused 不為真）才退回座標點擊；⊗ 沒清乾淨才動用退格。
+    兩欄各兩輪 6/6 成功。讀回驗證仍是最後防線。
+    另一型「提交前 AXValue 讀不到」的欄位（離職倒數報酬彈窗）不能用本函式——
+    讀回永遠失敗，見 record_daily_return 的提交後驗證。
     """
-    def current():
-        return str(ax.attr(ax.text_fields(ax.window(pid))[field_idx],
-                           "AXValue") or "").replace(",", "")
-    for _ in range(attempts):
+    def field():
         fields = ax.text_fields(ax.window(pid))
-        if field_idx >= len(fields):
+        return fields[field_idx] if field_idx < len(fields) else None
+
+    def current():
+        f = field()
+        return str(ax.attr(f, "AXValue") or "").replace(",", "") if f is not None else ""
+
+    for _ in range(attempts):
+        f = field()
+        if f is None:
             return False
-        f = fields[field_idx]
-        p, s = ax.point(f), ax.size(f)
-        if p is None or s is None:
-            return False
-        ax.click(p[0] + s[0] / 2, p[1] + s[1] / 2)
-        time.sleep(1.0)
-        ax.backspace(pid, len(current()) + 3)
+        clear_field(ax, f)
         time.sleep(0.5)
+        f = field()
+        if f is None:
+            return False
+        ax.press(f)
+        time.sleep(0.8)
+        if not ax.attr(field(), "AXFocused"):
+            p, s = ax.point(f), ax.size(f)
+            if p is None or s is None:
+                return False
+            ax.click(p[0] + s[0] / 2, p[1] + s[1] / 2)
+            time.sleep(1.0)
+        wait_keyboard(ax, pid)             # 鍵盤慢一步浮起會吞掉前綴（見 wait_keyboard）
+        if current():
+            ax.backspace(pid, len(current()) + 3)
+            time.sleep(0.4)
         ax.keystroke(pid, digits)
         time.sleep(0.5)
-        ax.keystroke(pid, "\r")
-        time.sleep(0.8)
+        dismiss_keyboard(ax, pid)          # 鍵盤蓋住下一個目標時 AXPress 會假成功
+        time.sleep(0.5)
         if current() == digits:
             return True
     return False
 
 
+def tier_calc_done(ax, w):
+    """AI 運算已完成的畫面判定。
+
+    舊版按下 AI運算會跳到布局自選頁；App 1.8.2 起改為留在運算機頁列出結果
+    （2026-09-02 實測），而「位階運算機」標題在輸入頁與結果頁都存在，不能單獨
+    當地標——要「輸入鈕消失」且「結果列出現」才算數。
+    """
+    if ax.by_desc(w, "布局 自選"):
+        return True
+    if not ax.by_desc(w, "位階運算機") or ax.by_desc(w, "AI運算今天可以買幾股"):
+        return False
+    return any(STRATEGY_ROW_RE.match(d or "") for _e, d in ax.descs(w, "AXStaticText"))
+
+
 def run_tier_calculator(ax, pid, idle_cash, names_count):
-    """跑位階運算機：輸入閒錢與檔數 → AI 運算 → App 跳到布局自選頁、
-    每列的位階股數／風控股數更新為今日值。回傳是否成功。
+    """跑位階運算機：輸入閒錢與檔數 → AI 運算 → 布局自選頁每列的位階股數／
+    風控股數更新為今日值（1.8.2 起結果先留在運算機頁，見 tier_calc_done）。
+    回傳是否成功。
 
     位階股數是 App 對「這筆閒錢分 N 檔」給的每檔買進建議——買進側的錨，
     與賣出側的 suggest_qty 對稱。入口「前往位階運算機」只在風控運算頁
@@ -1063,6 +1193,15 @@ def run_tier_calculator(ax, pid, idle_cash, names_count):
     entry = ax.by_desc(w, "前往位階運算機")
     if not entry:
         return False                   # 黃鈕是調節態，沒有布局入口
+    # 1.8.x 入口在固定儀表板下方可捲區的最底端：頁面沒捲到底時 AXPress 假成功、
+    # 座標點擊也落空（2026-09-02 實測），與現金欄要先捲到頂同理。先捲到底再按，
+    # 捲完元素會換，要重抓。
+    scroll_page_until_stable(
+        ax, pid, "AXScrollDownByPage",
+        lambda: [ax.point(e) for e in ax.by_desc(ax.window(pid), "前往位階運算機")])
+    entry = ax.by_desc(ax.window(pid), "前往位階運算機")
+    if not entry:
+        return False
     # 判準必須是運算機**獨有**的元素——運算頁本身就有 4 個 text_fields，
     # 用欄位數當判準會在 press 假成功時放行，接著把值寫進運算頁的欄位
     press_verified(ax, pid, entry[0],
@@ -1074,23 +1213,27 @@ def run_tier_calculator(ax, pid, idle_cash, names_count):
         if close:
             ax.press(close[0])
         return False
-    # 鍵盤 session 未收乾淨時 App 會吞掉按鈕動作（\r 偶發失效、「完成」浮鈕
-    # 不在 AX tree 驗不到）——補一發 \r 再點標題文字區（無互動元素）保險收掉。
-    ax.keystroke(pid, "\r")
-    time.sleep(1.0)
-    win = ax.window(pid)
-    p, s = ax.point(win), ax.size(win)
-    ax.click(p[0] + s[0] / 2, p[1] + 100)
-    time.sleep(0.8)
+    # 「AI運算」鈕在視窗底部，正好落在軟鍵盤那個 layer-101 視窗底下：鍵盤沒收掉
+    # 時 AXPress 假成功、座標點擊也只會點到鍵盤上（2026-09-02 實測數次全滅）。
+    # 收不掉就直接放棄——按下去也不會有事發生。
+    if not dismiss_keyboard(ax, pid):
+        return False
+    time.sleep(0.6)
     btn = ax.by_desc(ax.window(pid), "AI運算今天可以買幾股")
     if not btn:
         return False
     try:
-        press_verified(ax, pid, btn[0],
-                       lambda w: bool(ax.by_desc(w, "布局 自選")),
-                       "AI運算跳轉布局自選")
+        press_verified(ax, pid, btn[0], lambda w: tier_calc_done(ax, w), "AI運算完成")
     except RuntimeError:
         return False
+    # 1.8.2 的 AI運算先在運算機頁列出結果，一兩秒後才自己收掉彈窗跳到布局自選。
+    # 不等這段過場，呼叫端接著導航會撞上正在消失的彈窗——實測 read_layout 收尾的
+    # ensure_adjust_mode 就這樣逾時。沒跳成也不算失敗：結果已經算出來了，
+    # read_layout 自己會導航過去。
+    try:
+        wait_for(ax, pid, lambda w: bool(ax.by_desc(w, "位階股數")), "跳轉布局自選", timeout=15.0)
+    except RuntimeError:
+        pass
     return True
 
 

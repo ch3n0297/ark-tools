@@ -8,7 +8,7 @@ import re
 import subprocess
 import time
 
-from AppKit import NSApplicationActivateIgnoringOtherApps, NSWorkspace
+from AppKit import NSApplicationActivateIgnoringOtherApps, NSRunningApplication, NSWorkspace
 from ApplicationServices import (
     AXUIElementCopyActionNames,
     AXUIElementCopyAttributeValue,
@@ -19,7 +19,6 @@ from Quartz import (
     CGEventCreate,
     CGEventCreateKeyboardEvent,
     CGEventCreateMouseEvent,
-    CGEventCreateScrollWheelEvent,
     CGEventGetLocation,
     CGEventKeyboardSetUnicodeString,
     CGEventPost,
@@ -33,8 +32,9 @@ from Quartz import (
     kCGHIDEventTap,
     kCGMouseButtonLeft,
     kCGNullWindowID,
-    kCGScrollEventUnitPixel,
     kCGWindowListOptionAll,
+    kCGWindowBounds,
+    kCGWindowLayer,
     kCGWindowName,
     kCGWindowNumber,
     kCGWindowOwnerPID,
@@ -49,10 +49,15 @@ class ArkNotRunning(RuntimeError):
 
 
 def _running_app():
-    for app in NSWorkspace.sharedWorkspace().runningApplications():
-        if (app.bundleIdentifier() or "") == BUNDLE_ID:
-            return app
-    return None
+    """目前執行中的 ARK（NSRunningApplication），沒有就 None。
+
+    不能用 `NSWorkspace.runningApplications()`：那是 KVO 快取，只在 run loop
+    轉動時刷新，而我們的腳本沒有 run loop——`launch()` 輪詢 60 秒都看不到剛
+    啟動的 App（2026-09-02 實錄：mitmproxy 已看到它登入，這裡仍回 None）。
+    `runningApplicationsWithBundleIdentifier_` 每次都向系統查，才是即時的。
+    """
+    apps = NSRunningApplication.runningApplicationsWithBundleIdentifier_(BUNDLE_ID)
+    return apps[0] if apps else None
 
 
 def launch(timeout=60.0):
@@ -101,6 +106,24 @@ def activate(timeout=10.0):
         time.sleep(0.3)
     raise ArkNotRunning("方舟運算已啟動但讀不到視窗"
                         "（可能被最小化、尚未完成前景切換，或停在登入頁）")
+
+
+KEYBOARD_LAYER = 101      # 軟鍵盤所在的 CGWindow layer（一般視窗是 0）
+
+
+def keyboard_up(pid):
+    """軟鍵盤浮起時回傳它的 (x, y, w, h)，沒浮起回 None。
+
+    iOS 軟鍵盤是**獨立的 CGWindow**（layer 101），不在 App 的 `AXWindows` 裡
+    ——`AXWindows` 永遠只有主視窗一個，所以鍵盤裡的按鍵與「完成」鈕都按不到。
+    但它蓋住的東西 AXPress 會假成功（位階運算機的「AI運算」正好在它底下），
+    因此需要一個**可驗證鍵盤是否收掉**的訊號，這就是它。
+    """
+    for w in CGWindowListCopyWindowInfo(kCGWindowListOptionAll, kCGNullWindowID) or []:
+        if w.get(kCGWindowOwnerPID) == pid and w.get(kCGWindowLayer) == KEYBOARD_LAYER:
+            b = dict(w[kCGWindowBounds])
+            return (b["X"], b["Y"], b["Width"], b["Height"])
+    return None
 
 
 def screenshot(pid, path):
@@ -185,13 +208,25 @@ def window(pid):
     raise ArkNotRunning("讀不到 ARK 視窗（App 可能被隱藏／最小化而暫停）")
 
 
-def find(el, pred, out=None):
+def find(el, pred, out=None, seen=None):
+    """前序走訪 AX 樹，回傳所有符合 pred 的元素。
+
+    `seen` 擋環：App 剛被喚醒（unhide＋activate）的瞬間，AXChildren 可能
+    指回祖先，2026-09-02 14:43 的結算就這樣遞迴 990 層後 RecursionError，
+    整段 sync 掛掉。AXUIElement 的相等與雜湊是元素身份（實測同一元素兩次
+    取得相等、可進 set），所以用集合去重是安全的；正常的樹不受影響。
+    """
     if out is None:
         out = []
+    if seen is None:
+        seen = set()
+    if el in seen:
+        return out
+    seen.add(el)
     if pred(el):
         out.append(el)
     for kid in attr(el, "AXChildren") or []:
-        find(kid, pred, out)
+        find(kid, pred, out, seen)
     return out
 
 
@@ -302,32 +337,16 @@ def scroll_page(pid, action="AXScrollDownByPage", tries=4):
     return None
 
 
-def scroll(x, y, dy, times):
-    """滾輪捲動。只在非編輯的調節庫存頁有效（編輯頁被 reorder 手勢吃掉）。"""
-    CGWarpMouseCursorPosition((x, y))
-    time.sleep(0.3)
-    for _ in range(times):
-        CGEventPost(kCGHIDEventTap,
-                    CGEventCreateScrollWheelEvent(_SRC, kCGScrollEventUnitPixel, 1, dy))
-        time.sleep(0.2)
-    time.sleep(0.8)
-
-
 def dismiss_keyboard(pid):
     """收掉輸入 session，讓被蓋住的儲存鈕可按。
 
     打字後 ARK 在前景時會出現整條「完成」輔助列，失焦時則是右下角的
     「完成」浮鈕——兩者都會蓋住儲存鈕讓 AXPress 靜默失效，也都屬於
     系統輸入法層、不在 ARK 的 AX tree 裡。
-    失焦時送 \\r 讓欄位 resign first responder（截圖驗證浮鈕即消失）；
-    前景時維持點「完成」座標——需要實體滑鼠，但只剩這條路徑在用。
+    不分前景背景一律送 \\r 讓欄位 resign first responder。原本前景走點
+    「完成」座標：App 1.8.x 起那一下點不掉輸入 session，儲存照樣成功，
+    但殘留的 first responder 會吃掉之後所有 keystroke——同一輪 sync
+    第二檔起全部「填入空值、驗算不符」（2026-08-27 實機重現，改送 \\r 即解）。
     """
-    app = _running_app()
-    if app is not None and not app.isActive():
-        keystroke(pid, "\r")
-        time.sleep(0.4)
-        return
-    pos = point(window(pid))
-    if pos is None:
-        raise RuntimeError("讀不到 ARK 視窗位置，無法定位鍵盤的「完成」按鈕")
-    click(pos[0] + 325.5, pos[1] + 631.0)
+    keystroke(pid, "\r")
+    time.sleep(0.4)

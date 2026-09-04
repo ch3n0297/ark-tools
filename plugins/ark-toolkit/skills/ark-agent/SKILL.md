@@ -23,6 +23,8 @@ description: 自動交易決策軌：盤中產生決策包、Agent 依 ARK 紀�
   盤前讀到的是前一日盤後的舊值；10:00 也避開 09:00–09:30 的開盤波動
 - **執行**：系統自動下單，無人否決（安全由硬性上限與熔斷保證，不由人工把關）
 - **評估**：每筆決策的 5/20/60 日前瞻報酬、勝率、對照同期 0050 的超額報酬、ARK 紀律遵循度
+- **複盤**：每週五 15:00 自動（`daily.py review`）：本週案例 → 複盤層檢討「當初為什麼、
+  結果如何、買哪一檔對不對」→ 更新準則檔 → 驗準則檔完整 → commit。詳見 ark-review skill
 
 ## 資訊邊界（Agent 必讀，半開放）
 
@@ -39,7 +41,12 @@ description: 自動交易決策軌：盤中產生決策包、Agent 依 ARK 紀�
 
 ## 紀律限制（完全比照 ARK，語意出處：`../../references/ark-app-map.md`）
 
-- 只做現股；**檔數公式**：(持股市值＋閒錢) ÷ 10 萬，90 萬以上封頂 9 檔
+- 只做現股；**檔數公式**：(持股市值＋閒錢) ÷ 10 萬，90 萬以上封頂 9 檔。
+  `ARK_NAMES_FLOOR` 可抬高下限（預設 1＝純公式）——這是對紀律的明示偏離，
+  `discipline.names_floor` 會記下來源，紀律報告看得出來。
+  `ARK_NAMES_CAP=advisory` 可把上限改成參考值（預設 `hard`）：journal 不再因檔數
+  拒單，`envelope.core.names_cap` 讓決策層知道要自己判斷檔數；餵給 App 位階
+  運算機的檔數不受影響
 - **調節＝賣出側**：挑幾檔把調節金額加總**覆蓋運算頁「參考調節金額」**即可，
   不必每檔照做；**獲利才調節**（虧損賣出侵蝕本金，App 紀律不做）；升溫區優先
 - **布局＝買進側**：只挑價值區標的
@@ -85,6 +92,11 @@ uv run skills/ark-agent/dividends.py         # 3. 除權息資料（報酬校正
 uv run skills/ark-sync/sync.py --allow-delete --with-cash   # 4. 庫存與現金同步回 ARK
 uv run skills/ark-agent/record_return.py     # 5. 當日已實現獲利記進離職倒數（僅獲利日）
 
+# 週五 15:00 複盤（daily.py review 依序跑：案例 → 複盤層 → 驗準則檔 → commit）
+uv run skills/ark-agent/review.py --out ~/.ark-toolkit/agent/reviews/<date>.txt
+#                                              ★ 複盤層讀案例 → 寫檢討記錄、更新準則檔
+#                                              rules_intact 驗編號一條不少，壞了從備份還原
+
 # 隨時看成績
 uv run skills/ark-agent/evaluate.py          # --json 出機器格式；--offline 不連線
 ```
@@ -93,7 +105,7 @@ uv run skills/ark-agent/evaluate.py          # --json 出機器格式；--offlin
 
 ```bash
 cp skills/ark-agent/launchd/*.plist ~/Library/LaunchAgents/
-for j in decide settle; do launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.hjc.ark-agent.$j.plist; done
+for j in decide settle review; do launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.hjc.ark-agent.$j.plist; done
 
 # 改動排程或系統升級後，在真正的 launchd 環境下驗一次前置條件
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.hjc.ark-agent.check.plist
@@ -193,7 +205,7 @@ evaluate 只輸出點估計＋樣本數＋pending 筆數；60 日前瞻報酬要
 - `phase0.py` — 開局整理（一次性、有人監督、預設 dry-run）。**豁免金額上限**，
   因為那些上限是為了限制無人值守時的爆炸半徑；紀律照守，繼承軌一股不賣。
   刻意獨立成一支腳本而非在 execute.py 開繞過旗標——那種旗標日後一定會被誤用
-- `prompts/decide.md` — 決策層的提示模板；`launchd/` — 三份排程設定
+- `prompts/decide.md`／`prompts/review.md` — 決策層與複盤層的提示模板；`launchd/` — 四份排程設定
 - 委託路徑實機驗證在 **ark-start** skill（`skills/ark-start/verify.py`，寫死 simulation，
   碰不到真錢）——切 live 前先跑它
 - 持久化：`~/.ark-toolkit/agent/`（packets/、envelopes/、prices/、journal.jsonl、

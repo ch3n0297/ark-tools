@@ -3,6 +3,42 @@
 本檔記錄 ark-toolkit 的版本沿革。版本語意：主版號＝正式里程碑，
 次版號＝行為或語意變更，修訂號＝bug 修正。
 
+## [1.4.0] - 2026-09-04
+
+- **ark-agent 每週自動複盤**：`daily.py review`（launchd `com.hjc.ark-agent.review.plist`，
+  週五 15:00）依序跑 `review.py --out` 組本週案例 → 複盤層（`prompts/review.md`，只給
+  Read／Write／Edit、不上網）寫檢討記錄到準則檔旁的 `decision-reviews/<date>.md` 並更新
+  準則檔 → `rules_intact` 驗原有編號一條不少（改壞從 `~/.ark-toolkit/agent/reviews/
+  <date>.rules.bak` 還原）→ git commit 這兩個檔（不在 repo 內或 git 失敗只記 log，準則
+  已生效）→ 通知一行摘要。1.2.0 設計的學習迴路先前沒有觸發點，準則的損益證據到期了
+  也沒人看；複盤 prompt 明確要求檢討「買哪一檔、為什麼不是其他候選」
+- **檔數上限可設為參考值**：`ARK_NAMES_CAP=advisory`（預設 `hard`，行為不變）時
+  journal 不再因檔數拒單，`envelope.core.names_cap` 讓決策層知道要自己判斷檔數並在
+  rationale 說明；餵給 App 位階運算機的檔數不受影響（那是「App 對這筆閒錢分幾檔」的
+  輸入，改了會扭曲每檔建議金額）。`ARK_NAMES_FLOOR` 抬高檔數下限（預設 1＝純公式），
+  `discipline.names_floor` 記下來源；risk.py 在遲滯**之後**套下限，否則要連續 N 日才生效
+- **修：成交對回的買進價反推混用均價口徑**。1.3.0 起 packet 的持倉均價依 ARK 口徑換算
+  （對帳兩邊口徑必須相同），但 settle 反推買價時事後用券商原值，口徑差被舊持股數放大
+  （實例：持股 185 股只買 21 股，每股 0.07 元的差被放大成 0.6 元，反推價低於當日最低價、
+  每天 −0.9% 的假滑價）。packet 持倉多存 `raw_avg_price`，`journal.raw_positions` 讓對回
+  兩邊都用券商原值；`evaluate.fills_by_ref` 改認同一決策的**最後**一筆對回，算錯的對回
+  以 `corrected` 條目補正（journal 只能附加）
+- **`execute.py --latest`**：送同日最後一筆（amended）決策；預設仍送第一筆
+- **ARK App 1.8.x 版面**：調節庫存頁種類後多了「股價、漲跌幅」兩欄再接可選的建議調節，
+  依漲跌幅帶括號分辨新舊版面；布局自選頁整列變成單段文字（`parse_layout_line`／
+  `collect_layout_rows`），解析不到回 None 而非讀成空。`ax.ensure_ready` 不搶焦點、
+  `ark.ensure_responsive` 殭屍態自癒；軟鍵盤是獨立的 CGWindow（layer 101），
+  `ax.keyboard_up`／`ark.wait_keyboard`／`ark.dismiss_keyboard` 以「真的收掉了」為準
+  （1.8.x 起前景點「完成」座標會留下殘留的輸入 session，之後的 keystroke 全被吃掉）；
+  位階運算機以 `tier_calc_done` 判定完成。`ax.find` 帶 `seen` 防循環參照
+- **`lib/arkapi.py` 唯讀查詢層**：運算頁五指標與持股水位建議是純圖形儀表板、AX 讀不到，
+  改走伺服器 `calculateRisk`；重用 App 自己的 token（只在記憶體流動）、`call()` 白名單
+  讓寫入端點打不出去。**ark-sync 同步前以伺服器庫存交叉檢查 AX 解析結果**
+  （`cross_check`）：parser 被改版弄壞時當場中止、一個字都不寫，而不是把少讀的幾檔
+  判成「ARK 少了」去新增；伺服器讀不到（token 過期、沒網路）只是跳過這道檢查
+- `source.merge_positions` 均價四捨五入到分（浮點殘差 62.28000000000001 曾整串打進
+  ARK 的均價欄）
+
 ## [1.3.1] - 2026-08-22
 
 - **修：`ark-collect`／`ark-read` 沒把均價口徑傳給永豐讀取，快照仍是券商原值**

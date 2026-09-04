@@ -416,5 +416,155 @@ class TestSnapshot(unittest.TestCase):
         self.assertEqual((d["added"], d["removed"], d["changed"]), ([], [], []))
 
 
+# v1.8.0（2026-08-26）布局自選頁改成一列一段文字，數值不再是獨立元素：
+#   名稱, 代號, [位階…], 股價, 漲跌幅, 即時淨值, 折溢價%, 位階股數, 風控股數, 位階布局金額, 風控布局金額
+# 三筆皆取自實機。
+LAYOUT_LINE = "富邦科技, 0052, 價值, 61, ▲0.45(0.74%), 61.16, -0.26%, 23, 927, 1,403, 56,561"
+LAYOUT_LINE_NO_TIER = "元大全球5G, 00876, 85.95, ▲0.15(0.17%), 86.06, -0.13%, 34, 658, 2,923, 56,561"
+LAYOUT_LINE_TWO_TIERS = "野村全球航運龍頭, 00960, 價值, 升溫, 21.64, ▲0.01(0.05%), 21.66, -0.09%, 28, 2613, 606, 56,561"
+
+
+class TestParseLayoutLine(unittest.TestCase):
+    def test_單行文字全部欄位(self):
+        row = ark.parse_layout_line(LAYOUT_LINE)
+        self.assertEqual((row.code, row.tiers), ("0052", ("價值",)))
+        self.assertEqual((row.price, row.change, row.nav), (61.0, "▲0.45(0.74%)", 61.16))
+        self.assertAlmostEqual(row.premium, -0.26)
+        self.assertEqual((row.tier_qty, row.tier_amount), (23, 1403.0))
+        self.assertEqual((row.risk_qty, row.risk_amount), (927, 56561.0))
+
+    def test_無位階(self):
+        row = ark.parse_layout_line(LAYOUT_LINE_NO_TIER)
+        self.assertEqual((row.code, row.tiers, row.tier_qty), ("00876", (), 34))
+
+    def test_兩個位階(self):
+        row = ark.parse_layout_line(LAYOUT_LINE_TWO_TIERS)
+        self.assertEqual(row.tiers, ("價值", "升溫"))
+        self.assertEqual((row.tier_qty, row.risk_qty), (28, 2613))
+
+    def test_真實資料通過一致性檢查(self):
+        for s in (LAYOUT_LINE, LAYOUT_LINE_NO_TIER, LAYOUT_LINE_TWO_TIERS):
+            self.assertTrue(ark.layout_is_consistent(ark.parse_layout_line(s)), s)
+
+    def test_舊版名稱列回傳None(self):
+        self.assertIsNone(ark.parse_layout_line("元大全球5G, 00876, 價值"))
+        self.assertIsNone(ark.parse_layout_line(""))
+
+
+class TestCollectLayoutRows(unittest.TestCase):
+    """read_layout 每一屏的收集邏輯：新舊版面都要能讀，讀不出來的列要被拒絕而不是靜默略過。"""
+
+    def test_新版單行列(self):
+        found, rejected = ark.collect_layout_rows([(152.0, LAYOUT_LINE)], [])
+        self.assertEqual(list(found), ["0052"])
+        self.assertEqual(rejected, [])
+
+    def test_舊版名稱列加儲存格(self):
+        desc, top, cells = LAYOUT_ROW_V2
+        found, rejected = ark.collect_layout_rows([(top, desc)], cells)
+        self.assertEqual(list(found), ["00830"])
+        self.assertEqual(rejected, [])
+
+    def test_像資料列卻解析不出來要拒絕(self):
+        """1.8.0 實例：舊解析器對新版面一列都認不得、也不報錯，整頁靜默讀成 0 檔。"""
+        garbled = "富邦科技, 0052, 價值, 61, ▲0.45(0.74%), 61.16, -0.26%, 23, 927, 1,403, x"
+        found, rejected = ark.collect_layout_rows([(152.0, garbled)], [])
+        self.assertEqual(found, {})
+        self.assertEqual(rejected, [garbled])
+
+    def test_風控股數對不上要拒絕(self):
+        bad = LAYOUT_LINE.replace("927", "999")
+        _found, rejected = ark.collect_layout_rows([(152.0, bad)], [])
+        self.assertEqual(rejected, [bad])
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeLayoutPageAx:
+    """布局自選頁的可捲清單：AX 翻頁有效，滾輪若被呼叫就記錄下來（那會動游標）。
+
+    每「頁」露出 3 列、與前一頁重疊 1 列——重疊是逐頁收集不漏列的前提。
+    """
+
+    ROWS = ["富邦科技, 0052, 價值, 62.05, ▼1(-1.59%), 62.12, -0.11%, 1, 89, 63, 5,545",
+            "元大電子, 0053, 價值, 242.35, ▼4(-1.62%), 241.13, 0.51%, 0, 22, 0, 5,545",
+            "元大台灣50正2, 00631L, 價值, 35.93, ▼1.33(-3.57%), 35.9, 0.08%, 2, 154, 72, 5,545",
+            "元大台灣50, 0050, 價值, 106.8, ▼1.65(-1.52%), 106.67, 0.12%, 0, 51, 0, 5,545",
+            "元大高股息, 0056, 價值, 55.1, ▲0.25(0.46%), 55.35, -0.45%, 1, 100, 56, 5,545"]
+    PAGE, OVERLAP = 3, 1
+
+    def __init__(self):
+        self.top = 0
+        self.wheel_calls = []
+        self.page_calls = []
+
+    def window(self, pid):
+        return "w"
+
+    def point(self, el):
+        return (77.0, 158.0) if el == "w" else (77.0, 200.0)
+
+    def size(self, el):
+        return (288.0, 545.0)
+
+    def _visible(self):
+        return self.ROWS[self.top:self.top + self.PAGE]
+
+    def find(self, root, pred):
+        els = [("name", d) for d in self._visible()]
+        return [e for e in els if pred(e)]
+
+    def attr(self, el, name):
+        return {"AXDescription": el[1], "AXRole": "AXStaticText"}.get(name)
+
+    def descs(self, w, role=None):
+        return [("el", d) for d in self._visible()]
+
+    def by_desc(self, w, text):
+        return ["el"] if text in ("自選", "布局 自選", "位階股數", "股票名稱", "全部庫存",
+                                  "調節 庫存") else []
+
+    def press(self, el):
+        return 0
+
+    def perform(self, el, action):
+        return 0
+
+    def scroll(self, cx, cy, dy, times):
+        self.wheel_calls.append((cx, cy, dy))       # 滾輪＝會動游標，不該再被呼叫
+
+    def scroll_page(self, pid, action="AXScrollDownByPage", tries=4):
+        self.page_calls.append(action)
+        step = self.PAGE - self.OVERLAP
+        before = self.top
+        if action == "AXScrollDownByPage":
+            self.top = min(self.top + step, max(0, len(self.ROWS) - self.PAGE))
+        else:
+            self.top = max(0, self.top - step)
+        return 0 if self.top != before else None    # 到端點回 None（同 ax.scroll_page）
+
+
+class TestReadLayoutScrollsWithoutMouse(unittest.TestCase):
+    """讀布局自選頁每天都會跑。2026-08 時這頁沒有任何可捲的 AX 元素，只能用滾輪
+    （游標會被搶走）；App 1.8.2 起 38 個元素支援 AXScrollDownByPage（2026-09-02 實測），
+    改用 AX 翻頁就不必動游標了。"""
+
+    def _read(self, fake):
+        from unittest import mock
+        with mock.patch("time.sleep"):
+            return ark.read_layout(fake, 0)
+
+    def test_不再使用滾輪(self):
+        fake = FakeLayoutPageAx()
+        self._read(fake)
+        self.assertEqual(fake.wheel_calls, [])
+        self.assertIn("AXScrollDownByPage", fake.page_calls)
+
+    def test_先回頂再逐頁收集_不漏列(self):
+        fake = FakeLayoutPageAx()
+        fake.top = 2                                # 從中段開始，模擬上次停留的位置
+        view = self._read(fake)
+        self.assertEqual(set(view.rows), {"0052", "0053", "00631L", "0050", "0056"})
+        self.assertEqual(fake.page_calls[0], "AXScrollUpByPage")

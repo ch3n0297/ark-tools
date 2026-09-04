@@ -71,6 +71,15 @@ def first_decision(entries, date):
     return None
 
 
+def latest_decision(entries, date):
+    """該日期的最後一筆決策——送出 amended 決策時用；evaluate 仍只認第一筆。"""
+    picked = None
+    for e in entries:
+        if e.get("type") == "decision" and e.get("date") == date:
+            picked = e
+    return picked
+
+
 # ---------------------------------------------------------------- 驗證（硬規則）
 
 def _est_price(order, quotes):
@@ -177,7 +186,7 @@ def validate_orders(orders, packet, envelope=None):
                    | {o["code"] for o in core if o["action"] == "buy"})
     # 既有超限不歸咎於本日決策——只擋「讓檔數變得更糟」的單
     allowed = max(disc["max_names"], len(core_positions))
-    if len(names_after) > allowed:
+    if len(names_after) > allowed and disc.get("names_cap", "hard") != "advisory":
         violations.append(
             f"執行後主軌將持有 {len(names_after)} 檔，超過檔數上限 {disc['max_names']}")
     return violations
@@ -233,6 +242,15 @@ def record_decision(decision, packet, entries, override=False, envelope=None):
 def infer_buy_price(old_qty, old_avg, new_qty, new_avg):
     """買進成交價由持倉均價反推——list_profit_loss 只有賣出，買進得用 diff。"""
     return (new_qty * new_avg - old_qty * old_avg) / (new_qty - old_qty)
+
+
+def raw_positions(positions):
+    """對回用的事前持倉：均價一律取券商原值（`raw_avg_price`），與事後的
+    list_positions 同口徑。舊決策包沒有原值欄時退用 `avg_price`（若那是含費
+    口徑，反推會偏低——2026-08-22～09-03 的對回即因此重算過）。"""
+    return {code: {"qty": p["qty"],
+                   "avg_price": p.get("raw_avg_price", p["avg_price"])}
+            for code, p in positions.items()}
 
 
 def _slippage(price, order):
@@ -374,7 +392,7 @@ def settle_previous(api, today, path=JOURNAL, price_dir=None):
     after = {p.code: {"qty": int(p.quantity), "avg_price": float(p.price)}
              for p in api.list_positions(api.stock_account, unit=sj.Unit.Share)}
     pk = packet_mod.load_packet(prev)
-    before = (pk or {}).get("account", {}).get("positions", {})
+    before = raw_positions((pk or {}).get("account", {}).get("positions", {}))
     ext = external_legs(entries, prev, decision.get("lock"))
     ext_buys = {}
     for leg in ext:

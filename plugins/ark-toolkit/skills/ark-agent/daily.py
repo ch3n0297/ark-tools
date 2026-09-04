@@ -12,6 +12,7 @@
 
     daily.py decide    平日 10:00　事實 → 風控 → 判斷 → 紀律驗證 → 送單
     daily.py settle    平日 14:30　成交對回 → 淨值 → 同步庫存與現金欄
+    daily.py review    週五 15:00　本週案例 → 檢討並更新準則 → 驗準則檔 → commit
     daily.py check     隨選　　　　前置檢查（無副作用，只讀）
 
 **LLM 只佔 decide 的第 3 步，而且不給 Bash 工具**——它產出 decision.json 之後
@@ -44,7 +45,8 @@ PROCEED, SKIP, FAIL = "proceed", "skip", "fail"
 
 # (排定時刻, 容許分鐘)。decide 窗窄——盤中判斷過了時間就失效；settle 窗寬——
 # 那是對既成事實的記錄，晚幾小時做結果一樣。
-WINDOWS = {"decide": ("10:00", 60), "settle": ("14:30", 240)}
+WINDOWS = {"decide": ("10:00", 60), "settle": ("14:30", 240),
+           "review": ("15:00", 240)}
 
 # 決策模型。無人值守下要動真錢，判斷品質是最不該省的地方。
 DECISION_MODEL = os.environ.get("ARK_DECISION_MODEL", "fable")
@@ -83,20 +85,43 @@ def classify_risk_exit(code):
     return {0: PROCEED, 3: SKIP}.get(code, FAIL)
 
 
-def render_prompt(template, packet, envelope, decision, date):
+def _render(template, mapping):
     """把提示模板的佔位符換成實際路徑。
 
     換完仍殘留 `*_PATH` 字樣就報錯：Agent 會照字面把決策寫到 'DECISION_PATH'
     這個檔名，排程接著找不到檔案，而那時已經浪費一次決策機會了。
     """
-    out = (template.replace("PACKET_PATH", packet)
-                   .replace("ENVELOPE_PATH", envelope)
-                   .replace("DECISION_PATH", decision)
-                   .replace("TODAY", date))
+    out = template
+    for key, value in mapping.items():
+        out = out.replace(key, value)
     left = re.findall(r"\b[A-Z_]+_PATH\b", out)
     if left:
         raise ValueError(f"提示模板有未取代的佔位符：{sorted(set(left))}")
     return out
+
+
+def render_prompt(template, packet, envelope, decision, date):
+    return _render(template, {"PACKET_PATH": packet, "ENVELOPE_PATH": envelope,
+                              "DECISION_PATH": decision, "TODAY": date})
+
+
+def render_review_prompt(template, review, rules, doc, date):
+    return _render(template, {"REVIEW_PATH": review, "RULES_PATH": rules,
+                              "REVIEW_DOC_PATH": doc, "TODAY": date})
+
+
+def review_doc_path(rules_path, date):
+    """檢討記錄放在準則檔旁的 decision-reviews/——準則與它的「為什麼」一起版控。"""
+    return os.path.join(os.path.dirname(rules_path), "decision-reviews", f"{date}.md")
+
+
+def rules_intact(before, after):
+    """模型改過的準則檔是否仍完整：原有編號一條不少（淘汰是搬到「已淘汰」段，
+    不是刪掉）。編號消失或標題格式被改到解析不到，隔天決策就拿不到準則，而且
+    不會有人發現——寫回前要擋。原本就沒準則的新裝環境，寫不寫都不算改壞。"""
+    from packet import rule_ids
+    old = rule_ids(before)
+    return not old or set(old) <= set(rule_ids(after))
 
 
 def is_quota_exhausted(output):
@@ -173,22 +198,26 @@ def run(mode, *args):
                               check=False).returncode
 
 
-def ask_model(mode, prompt, model):
+DECIDE_TOOLS = ("Read", "Write", "WebSearch", "WebFetch")
+REVIEW_TOOLS = ("Read", "Write", "Edit")       # 改準則檔要 Edit；複盤不上網
+
+
+def ask_model(mode, prompt, model, tools=DECIDE_TOOLS, cwd=STATE):
     """LLM 插槽：只給讀檔／寫檔／查新聞，**不給 Bash**——它無法自行送單或改紀錄。
     回傳 (離開碼, 輸出)，輸出同時進 daily.log。
 
     先收進記憶體再寫檔而非直接導向 log：額度耗盡與其他故障都是非零離開，
     要分辨只能看輸出內容。
     """
-    log(mode, f"呼叫 claude（{model}）產生決策…")
+    log(mode, f"呼叫 claude（{model}）…")
     proc = subprocess.run(
         ["claude", "-p", prompt,
          "--model", model,
-         "--allowedTools", "Read", "Write", "WebSearch", "WebFetch",
+         "--allowedTools", *tools,
          "--permission-mode", "acceptEdits",
          "--output-format", "text"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, cwd=STATE, check=False)
+        text=True, cwd=cwd, check=False)
     with open(LOG, "a", encoding="utf-8") as fh:
         fh.write(proc.stdout)
     return proc.returncode, proc.stdout
@@ -276,6 +305,84 @@ def settle(date):
     return 0
 
 
+def _read(path):
+    if not os.path.exists(path):
+        return ""
+    with open(path, encoding="utf-8") as fh:
+        return fh.read()
+
+
+def commit_files(mode, paths, message):
+    """把複盤產物 commit 進準則檔所在的 repo。不在 repo 內或 git 失敗只記 log——
+    準則已在磁碟上生效，commit 是追溯用，不該讓它擋住複盤。"""
+    top = subprocess.run(["git", "-C", os.path.dirname(paths[0]),
+                          "rev-parse", "--show-toplevel"],
+                         capture_output=True, text=True, check=False)
+    if top.returncode != 0:
+        log(mode, "準則檔不在 git repo 內，略過 commit")
+        return False
+    root = top.stdout.strip()
+    for args in (["add", "--", *paths], ["commit", "-m", message, "--", *paths]):
+        log(mode, "$ git " + " ".join(args))
+        with open(LOG, "a", encoding="utf-8") as fh:
+            rc = subprocess.run(["git", "-C", root, *args], stdout=fh,
+                                stderr=subprocess.STDOUT, check=False).returncode
+        if rc != 0:
+            log(mode, "⚠️ git 失敗，準則已生效但未 commit（可稍後手動補）")
+            return False
+    return True
+
+
+def review(date):
+    """週複盤：本週案例 → 模型檢討並更新準則 → 驗準則檔 → commit → 通知。
+
+    模型只拿到 Read／Write／Edit，改的是準則檔與檢討記錄；改壞（編號消失）就
+    從備份還原，隔天決策拿到的永遠是解析得到的準則。
+    """
+    import packet as packet_mod
+    mode = "review"
+    if not in_window(mode):
+        return 0
+    rules = packet_mod.RULES_PATH
+    reviews = os.path.join(STATE, "reviews")
+    os.makedirs(reviews, exist_ok=True)
+    report = os.path.join(reviews, f"{date}.txt")
+    if run(mode, os.path.join(HERE, "review.py"), "--until", date, "--out", report) != 0:
+        notify(mode, "🛑 複盤案例產生失敗")
+        return 1
+
+    before = _read(rules)
+    with open(os.path.join(reviews, f"{date}.rules.bak"), "w", encoding="utf-8") as fh:
+        fh.write(before)
+    doc = review_doc_path(rules, date)
+    os.makedirs(os.path.dirname(doc), exist_ok=True)
+    with open(os.path.join(HERE, "prompts", "review.md"), encoding="utf-8") as fh:
+        prompt = render_review_prompt(fh.read(), report, rules, doc, date)
+
+    cwd = os.path.dirname(rules)          # acceptEdits 只自動放行工作目錄內的改動
+    rc, out = ask_model(mode, prompt, DECISION_MODEL, tools=REVIEW_TOOLS, cwd=cwd)
+    successor = fallback_model(rc, out, DECISION_MODEL, FALLBACK_MODEL)
+    if successor:
+        notify(mode, f"⚠️ {DECISION_MODEL} 額度耗盡，改用 {successor} 重試")
+        rc, out = ask_model(mode, prompt, successor, tools=REVIEW_TOOLS, cwd=cwd)
+    if rc != 0:
+        notify(mode, "🛑 複盤失敗（claude 非零離開）")
+        return 1
+
+    if not rules_intact(before, _read(rules)):
+        with open(rules, "w", encoding="utf-8") as fh:
+            fh.write(before)
+        notify(mode, "🛑 準則檔被改壞（編號消失或格式解析不到），已從備份還原")
+        return 1
+    if not os.path.exists(doc):
+        notify(mode, f"🛑 檢討記錄未產生：{doc}")
+        return 1
+    commit_files(mode, [rules, doc], f"決策複盤 {date}")
+    lines = [ln for ln in out.strip().splitlines() if ln.strip()]
+    notify(mode, f"✅ {date} 複盤完成：{lines[-1][:80] if lines else ''}")
+    return 0
+
+
 def check(backend):
     mode = "check"
     bad = []
@@ -296,7 +403,7 @@ def check(backend):
 
 def main():
     ap = argparse.ArgumentParser(description="ark-agent 每日排程編排")
-    ap.add_argument("mode", choices=("decide", "settle", "check"))
+    ap.add_argument("mode", choices=("decide", "settle", "review", "check"))
     ap.add_argument("--date", help="覆寫日期（預設今天）")
     args = ap.parse_args()
 
@@ -306,6 +413,8 @@ def main():
         return decide(date, backend)
     if args.mode == "settle":
         return settle(date)
+    if args.mode == "review":
+        return review(date)
     return check(backend)
 
 

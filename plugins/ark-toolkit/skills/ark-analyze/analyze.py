@@ -292,7 +292,8 @@ def main():
     ark.check_platform(tool="ark-analyze")
     import ax
 
-    pid = ax.activate()
+    pid = ax.ensure_ready()                  # 不搶焦點：ARK 視窗可見即可
+    pid = ark.ensure_responsive(ax, pid)     # 殭屍態在這裡自癒
     print("讀取 ARK 庫存…", flush=True)
     holdings = ark.read_holdings(ax, pid)
     declared = ark.read_declared_count(ax, pid)

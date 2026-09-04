@@ -309,6 +309,7 @@ def main():
     ap.add_argument("--json", action="store_true", help="輸出機器可讀 JSON")
     ap.add_argument("--offline", action="store_true",
                     help="只用本地日K快取，不連 Shioaji 補資料")
+    ap.add_argument("--out", help="把輸出寫到檔案（排程餵給複盤層用），不印到 stdout")
     args = ap.parse_args()
 
     until = args.until or dt.date.today().isoformat()
@@ -339,12 +340,17 @@ def main():
     cases = cases_from(entries, report, since, until, contexts)
     perf = rule_performance(cases, args.horizon)
     if args.json:
-        print(json.dumps({"since": since, "until": until, "cases": cases,
-                          "rule_performance": perf},
-                         ensure_ascii=False, indent=2))
+        text = json.dumps({"since": since, "until": until, "cases": cases,
+                           "rule_performance": perf}, ensure_ascii=False, indent=2)
     else:
-        print(f"複盤區間 {since} ～ {until}　案例 {len(cases)} 則")
-        print(render(cases, perf, args.horizon))
+        text = (f"複盤區間 {since} ～ {until}　案例 {len(cases)} 則\n"
+                + render(cases, perf, args.horizon))
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write(text + "\n")
+        print(f"✅ 複盤案例已存至 {args.out}（{len(cases)} 則）")
+    else:
+        print(text)
     return 0
 
 
